@@ -3,13 +3,25 @@
   "productName": "hidpilot",
   "version": "0.1.0",
   "identifier": "io.github.leandrodaf.hidpilot",
-  "build": { "frontendDist": "ui" },
+  "build": {
+    "frontendDist": "ui"
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [
-      { "title": "hidpilot", "width": 1100, "height": 760, "minWidth": 820, "minHeight": 600 }
+      {
+        "title": "hidpilot",
+        "width": 420,
+        "height": 800,
+        "minWidth": 380,
+        "minHeight": 600
+      }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
-  "bundle": { "active": false }
+  "bundle": {
+    "active": false
+  }
 }

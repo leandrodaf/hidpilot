@@ -44,9 +44,17 @@ pub const SIDETONE_MAX: u8 = 10;
 pub struct Equalizer {
     /// Passed through untouched, as Logi Tune does.
     pub mode: u8,
-    /// Gain per band in dB.
+    /// Gain per band, low to high, in the device's own units (-128..=127, 0 = flat).
     pub bands: [i8; EQ_BANDS],
 }
+
+/// Built-in presets as Logi Tune defines them for Centurion headsets.
+pub const EQ_PRESETS: [(&str, [i8; EQ_BANDS]); 4] = [
+    ("Default", [0, 0, 0, 0, 0]),
+    ("Volume Boost", [127, 127, 127, 127, 127]),
+    ("Podcast", [0, 25, 102, 127, 76]),
+    ("Bass Boost", [127, 76, 25, 25, 25]),
+];
 
 pub struct Headset {
     io: Hidraw,

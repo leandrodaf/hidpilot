@@ -70,7 +70,7 @@ enum Cmd {
         /// Rename the headset (as other devices see it over Bluetooth)
         #[arg(long)]
         name: Option<String>,
-        /// Equalizer: "flat" or five gains in dB, e.g. 4,2,0,-2,3
+        /// Equalizer: "flat", a preset name, or five gains (-128..127), e.g. 40,20,0,-20,30
         #[arg(long, allow_hyphen_values = true)]
         eq: Option<String>,
         /// How much of your own voice you hear (0-10)
@@ -195,7 +195,8 @@ fn main() -> Result<()> {
             println!("  auto sleep: {} min", h.auto_sleep()?);
             if let Ok(e) = h.equalizer() {
                 let bands: Vec<String> = e.bands.iter().map(|b| format!("{b:+}")).collect();
-                println!("  equalizer: {} dB", bands.join(" "));
+                let preset = centurion::EQ_PRESETS.iter().find(|(_, b)| *b == e.bands).map(|(n, _)| *n).unwrap_or("Custom");
+                println!("  equalizer: {preset} ({})", bands.join(" "));
             }
             if let Ok(v) = h.sidetone() {
                 println!("  sidetone: {v}/{}", centurion::SIDETONE_MAX);
@@ -321,11 +322,15 @@ fn parse_eq(s: &str) -> Result<[i8; centurion::EQ_BANDS]> {
     if s.eq_ignore_ascii_case("flat") {
         return Ok([0; centurion::EQ_BANDS]);
     }
+    let wanted = s.to_lowercase().replace(['-', '_', ' '], "");
+    if let Some((_, b)) = centurion::EQ_PRESETS.iter().find(|(n, _)| n.to_lowercase().replace(' ', "") == wanted) {
+        return Ok(*b);
+    }
     let gains: Vec<i8> = s
         .split(',')
         .map(|g| g.trim().parse::<i8>())
         .collect::<std::result::Result<_, _>>()
-        .map_err(|_| anyhow::anyhow!("equalizer gains must be whole dB numbers"))?;
+        .map_err(|_| anyhow::anyhow!("equalizer gains must be whole numbers from -128 to 127"))?;
     gains
         .try_into()
         .map_err(|_| anyhow::anyhow!("the equalizer has {} bands", centurion::EQ_BANDS))

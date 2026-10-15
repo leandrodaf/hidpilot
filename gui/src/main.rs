@@ -166,13 +166,73 @@ fn hidpp_snapshot(dev: &mut Device) -> Value {
 }
 
 fn headset_snapshot(h: &mut Headset) -> Value {
+    let eq = h.equalizer().ok().map(|e| {
+        let preset = centurion::EQ_PRESETS.iter().find(|(_, b)| *b == e.bands).map(|(n, _)| *n).unwrap_or("Custom");
+        json!({"bands": e.bands, "preset": preset})
+    });
     json!({
         "name": h.name,
         "kind": "headset",
         "serial": opt(h.serial()),
         "battery": headset_battery_json(h),
         "autoSleep": opt(h.auto_sleep()),
+        "equalizer": eq,
+        "presets": centurion::EQ_PRESETS.iter().map(|(n, b)| json!({"name": n, "bands": b})).collect::<Vec<_>>(),
+        "sidetone": opt(h.sidetone()),
+        "sidetoneMax": centurion::SIDETONE_MAX,
+        "micMuted": opt(h.mic_muted()),
+        "voicePrompts": opt(h.voice_prompts()),
+        "rotateToMute": opt(h.rotate_to_mute()),
+        "bluetoothConnections": opt(h.bluetooth_connections()),
+        "micLevel": mic::level().ok(),
     })
+}
+
+/// The headset's microphone level lives in the sound server (PipeWire), as in Logi Tune.
+mod mic {
+    use anyhow::{Context, Result, bail};
+    use std::process::Command;
+
+    /// Node id of the headset microphone, from `wpctl status`.
+    fn source() -> Result<String> {
+        let out = Command::new("wpctl").arg("status").output().context("wpctl not found")?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut in_sources = false;
+        for line in text.lines() {
+            let l = line.trim_start_matches([' ', '│', '├', '└', '─', '*']).trim();
+            if line.contains("Sources:") {
+                in_sources = true;
+                continue;
+            }
+            if in_sources && line.contains(":") && !l.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                in_sources = false;
+            }
+            if in_sources && l.contains("Zone") {
+                if let Some((id, _)) = l.split_once('.') {
+                    return Ok(id.trim().to_string());
+                }
+            }
+        }
+        bail!("headset microphone not found in PipeWire")
+    }
+
+    pub fn level() -> Result<u32> {
+        let out = Command::new("wpctl").args(["get-volume", &source()?]).output()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let v: f64 = text.split_whitespace().nth(1).context("no volume")?.parse()?;
+        Ok((v * 100.0).round() as u32)
+    }
+
+    pub fn set_level(percent: u32) -> Result<()> {
+        if percent > 100 {
+            bail!("level must be 0-100");
+        }
+        let v = format!("{:.2}", percent as f64 / 100.0);
+        if !Command::new("wpctl").args(["set-volume", &source()?, &v]).status()?.success() {
+            bail!("wpctl failed");
+        }
+        Ok(())
+    }
 }
 
 #[tauri::command(async)]
@@ -230,6 +290,18 @@ fn set(state: tauri::State<State>, id: String, key: String, value: Value) -> Res
             Target::Headset(h) => {
                 match key.as_str() {
                     "autoSleep" => h.set_auto_sleep(as_u8(&value)?)?,
+                    "name" => h.set_name(value.as_str().context("expected text")?)?,
+                    "sidetone" => h.set_sidetone(as_u8(&value)?)?,
+                    "micMuted" => h.set_mic_muted(as_bool(&value)?)?,
+                    "voicePrompts" => h.set_voice_prompts(as_bool(&value)?)?,
+                    "rotateToMute" => h.set_rotate_to_mute(as_bool(&value)?)?,
+                    "micLevel" => mic::set_level(value.as_u64().context("expected a number")? as u32)?,
+                    "equalizer" => {
+                        let bands: Vec<i8> = serde_json::from_value(value.clone()).context("expected five gains")?;
+                        let bands: [i8; centurion::EQ_BANDS] = bands.try_into().map_err(|_| anyhow!("expected five gains"))?;
+                        let mode = if bands == [0; centurion::EQ_BANDS] { 0 } else { h.equalizer().map(|e| e.mode).unwrap_or(0) };
+                        h.set_equalizer(centurion::Equalizer { mode, bands })?;
+                    }
                     _ => return Err(anyhow!("unknown setting {key}")),
                 }
                 Ok(headset_snapshot(h))
@@ -238,8 +310,39 @@ fn set(state: tauri::State<State>, id: String, key: String, value: Value) -> Res
     })
 }
 
+/// Where scripts/fetch-logitech-assets.sh puts fonts and device pictures taken from the
+/// user's own copy of the Logitech apps. They are never shipped with hidpilot.
+fn assets_dir() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))
+        .unwrap_or_default();
+    base.join("hidpilot/logitech")
+}
+
+fn serve_asset(path: &str) -> tauri::http::Response<Vec<u8>> {
+    let not_found = || tauri::http::Response::builder().status(404).body(Vec::new()).unwrap();
+    let rel = path.trim_start_matches('/');
+    // Plain relative names only: no "..", no absolute paths.
+    if rel.is_empty() || rel.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
+        return not_found();
+    }
+    let Ok(data) = std::fs::read(assets_dir().join(rel)) else { return not_found() };
+    let mime = match rel.rsplit('.').next().unwrap_or("") {
+        "webp" => "image/webp",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        "otf" => "font/otf",
+        "ttf" => "font/ttf",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    };
+    tauri::http::Response::builder().header("Content-Type", mime).body(data).unwrap()
+}
+
 fn main() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("lgasset", |_ctx, req| serve_asset(req.uri().path()))
         .manage(State(Mutex::new(Devices::default())))
         .invoke_handler(tauri::generate_handler![devices, device, set])
         .run(tauri::generate_context!())
