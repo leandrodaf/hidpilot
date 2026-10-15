@@ -349,7 +349,11 @@ fn serve_asset(path: &str) -> tauri::http::Response<Vec<u8>> {
         "woff2" => "font/woff2",
         _ => "application/octet-stream",
     };
-    tauri::http::Response::builder().header("Content-Type", mime).body(data).unwrap()
+    tauri::http::Response::builder()
+        .header("Content-Type", mime)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(data)
+        .unwrap()
 }
 
 // ---------- buttons, gestures and thumb wheel (served by `hidpilot remap run`) ----------
@@ -523,6 +527,182 @@ fn flow_pair() -> Result<String, String> {
     Ok(code)
 }
 
+/// JSON from the local Logitech assets (hotspot metadata), read here so the page does
+/// not depend on cross-origin fetches of the lgasset:// scheme.
+#[tauri::command(async)]
+fn asset_json(path: String) -> Result<Value, String> {
+    if path.split('/').any(|c| c.is_empty() || c == "." || c == "..") || !path.ends_with(".json") {
+        return Err("bad asset path".into());
+    }
+    let text = std::fs::read_to_string(assets_dir().join(&path)).map_err(|e| format!("{path}: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Background services the page can check and switch on (user services, no root).
+const SERVICES: [&str; 2] = ["hidpilot-remap", "hidpilot-flow"];
+
+fn systemctl_user(args: &[&str]) -> Result<std::process::Output> {
+    Ok(std::process::Command::new("systemctl").arg("--user").args(args).output()?)
+}
+
+#[tauri::command(async)]
+fn service_status(name: String) -> Result<Value, String> {
+    if !SERVICES.contains(&name.as_str()) {
+        return Err("unknown service".into());
+    }
+    let unit = format!("{name}.service");
+    let active = systemctl_user(&["is-active", &unit]).map(|o| o.status.success()).unwrap_or(false);
+    let installed = systemctl_user(&["cat", &unit]).map(|o| o.status.success()).unwrap_or(false);
+    // Running by hand (e.g. `hidpilot remap run` in a terminal) counts too.
+    let process = match name.as_str() {
+        "hidpilot-flow" => "hidpilot-flow",
+        _ => "hidpilot",
+    };
+    let by_hand = std::process::Command::new("pgrep")
+        .args(["-f", if process == "hidpilot" { "hidpilot remap run" } else { "hidpilot-flow run" }])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    Ok(json!({ "active": active || by_hand, "installed": installed }))
+}
+
+#[tauri::command(async)]
+fn service_enable(name: String) -> Result<Value, String> {
+    if !SERVICES.contains(&name.as_str()) {
+        return Err("unknown service".into());
+    }
+    let unit = format!("{name}.service");
+    let out = systemctl_user(&["enable", "--now", &unit]).map_err(err)?;
+    logln!("service_enable {unit}: {} {}", out.status, String::from_utf8_lossy(&out.stderr).trim());
+    if !out.status.success() {
+        return Err(format!("não foi possível ativar {unit}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    service_status(name)
+}
+
+// ---------- typing layout (GNOME input sources) ----------
+
+/// Layouts offered for typing Portuguese; ids are xkb "layout+variant".
+const LAYOUTS: [(&str, &str, &str); 4] = [
+    ("us+intl", "EUA Internacional – acentos do português", "Teclado físico americano. ´ ~ ^ ` ¨ viram acento nas vogais e ´+c dá ç; nas outras letras sai o próprio símbolo."),
+    ("us+altgr-intl", "EUA Internacional com AltGr", "Teclado físico americano. Aspas e acentos saem normais; os acentos ficam no AltGr (AltGr+' = ´)."),
+    ("br", "Português (Brasil) ABNT2", "Para teclados físicos ABNT2, com tecla Ç."),
+    ("us", "EUA", "Sem acentos."),
+];
+
+fn gsettings(args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new("gsettings").args(args).output().context("gsettings not found")?;
+    if !out.status.success() {
+        anyhow::bail!("gsettings: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[tauri::command(async)]
+fn layout_get() -> Result<Value, String> {
+    // e.g. [('xkb', 'us+intl')]
+    let sources = gsettings(&["get", "org.gnome.desktop.input-sources", "sources"]).map_err(err)?;
+    let current = sources.split('\'').nth(3).unwrap_or("").to_string();
+    let compose = std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".XCompose"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .is_some_and(|t| t.contains("hidpilot"));
+    Ok(json!({
+        "current": current,
+        "options": LAYOUTS.iter().map(|(id, name, hint)| json!({"id": id, "name": name, "hint": hint})).collect::<Vec<_>>(),
+        "smartAccents": compose,
+    }))
+}
+
+#[tauri::command(async)]
+fn layout_set(id: String) -> Result<Value, String> {
+    if !LAYOUTS.iter().any(|(l, _, _)| *l == id) {
+        return Err("unknown layout".into());
+    }
+    gsettings(&["set", "org.gnome.desktop.input-sources", "sources", &format!("[('xkb', '{id}')]")]).map_err(err)?;
+    logln!("layout set to {id}");
+    layout_get()
+}
+
+// ---------- app settings: start with the computer, open the window at login ----------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
+struct AppSettings {
+    /// Start hidpilot when the user logs in (in the tray).
+    autostart: bool,
+    /// Also show the window when started at login; off = tray only.
+    open_on_login: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        AppSettings { autostart: true, open_on_login: true }
+    }
+}
+
+fn config_home() -> std::path::PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .unwrap_or_default()
+}
+
+fn settings_path() -> std::path::PathBuf {
+    config_home().join("hidpilot/app.toml")
+}
+
+fn autostart_path() -> std::path::PathBuf {
+    config_home().join("autostart/hidpilot.desktop")
+}
+
+fn load_settings() -> AppSettings {
+    std::fs::read_to_string(settings_path()).ok().and_then(|t| toml::from_str(&t).ok()).unwrap_or_default()
+}
+
+/// Writes the settings and makes the login entry match them.
+fn apply_settings(s: AppSettings) -> Result<()> {
+    let p = settings_path();
+    std::fs::create_dir_all(p.parent().unwrap())?;
+    std::fs::write(&p, toml::to_string(&s)?)?;
+    let entry = autostart_path();
+    if s.autostart {
+        std::fs::create_dir_all(entry.parent().unwrap())?;
+        std::fs::write(
+            &entry,
+            "[Desktop Entry]\nType=Application\nName=hidpilot\nComment=Logitech devices in the tray\n\
+             Exec=hidpilot-gui --login\nIcon=hidpilot\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        )?;
+    } else if entry.exists() {
+        std::fs::remove_file(&entry)?;
+    }
+    logln!("settings: autostart={} open_on_login={}", s.autostart, s.open_on_login);
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn settings_get() -> Value {
+    let s = load_settings();
+    json!({ "autostart": s.autostart, "openOnLogin": s.open_on_login })
+}
+
+#[tauri::command(async)]
+fn settings_set(key: String, value: bool) -> Result<Value, String> {
+    let mut s = load_settings();
+    match key.as_str() {
+        "autostart" => s.autostart = value,
+        "openOnLogin" => s.open_on_login = value,
+        _ => return Err("unknown setting".into()),
+    }
+    apply_settings(s).map_err(err)?;
+    Ok(settings_get())
+}
+
+/// Lets the page write to the app log (errors, failed loads).
+#[tauri::command]
+fn log_js(msg: String) {
+    logln!("page: {}", msg.chars().take(500).collect::<String>());
+}
+
 fn main() {
     logfile::init();
     logln!(
@@ -541,6 +721,20 @@ fn main() {
         }))
         .register_uri_scheme_protocol("lgasset", |_ctx, req| serve_asset(req.uri().path()))
         .setup(|app| {
+            if !settings_path().exists() {
+                if let Err(e) = apply_settings(AppSettings::default()) {
+                    logln!("settings: could not write defaults: {e:#}");
+                }
+            }
+            // Started at login with "open the window" off: stay in the tray.
+            let at_login = std::env::args().any(|a| a == "--login");
+            if !(at_login && !load_settings().open_on_login) {
+                if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
+                    let _ = w.show();
+                }
+            } else {
+                logln!("started at login: staying in the tray");
+            }
             if let Err(e) = tray::install(app.handle()) {
                 logln!("tray: failed to install: {e}");
             }
@@ -554,7 +748,7 @@ fn main() {
         })
         .on_window_event(tray::hide_on_close)
         .manage(State(Mutex::new(Devices::default())))
-        .invoke_handler(tauri::generate_handler![devices, device, set, remap_get, remap_set, thumbwheel_set, flow_get, flow_set, flow_pair])
+        .invoke_handler(tauri::generate_handler![devices, device, set, remap_get, remap_set, thumbwheel_set, flow_get, flow_set, flow_pair, asset_json, service_status, service_enable, log_js, layout_get, layout_set, settings_get, settings_set])
         .run(tauri::generate_context!())
         .expect("failed to start hidpilot");
 }

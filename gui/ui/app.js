@@ -56,6 +56,7 @@ async function openDevice(id) {
   try {
     state.snap = await invoke("device", { id });
     if (state.snap.kind !== "headset") await loadMeta(depotOf(state.snap.name));
+    enterTab(state.snap.kind === "keyboard" ? "keys" : state.snap.kind === "mouse" ? "buttons" : "audio");
   } catch (e) {
     toast(e);
     state.page = "home";
@@ -341,7 +342,6 @@ async function diagnose() {
     check("Microfone no sistema de som", s.micLevel),
   ];
   if (!s.error) state.snap = s;
-  state.sheet = "diag";
   render();
 }
 
@@ -350,19 +350,15 @@ function render() {
   const s = state.snap;
   let html;
   if (state.page === "flow") html = opFlowPage();
+  else if (state.page === "settings") html = opSettings();
   else if (state.page === "home" || (!s && state.page !== "device")) html = opHome();
   else if (!s) html = `<div class="spinner"></div>`;
-  else if (s.kind !== "headset") html = opDevice(s);
-  else {
-    // Headsets use Logi Tune's screens, in a column like Tune's own window.
-    let inner;
-    if (state.page === "eq") inner = eqPage(s);
-    else if (state.page === "about") inner = aboutPage(s);
-    else if (state.page === "connections") inner = connectionsPage(s);
-    else inner = headsetPage(s);
-    html = `<div class="tune-shell"><div class="tune-col">${inner}${sheet()}</div></div>`;
-  }
+  else html = opDevice(s);
+  // Keep the side panel's scroll position across live refreshes.
+  const scroll = app.querySelector(".op-panel")?.scrollTop;
   app.innerHTML = html;
+  const panel = app.querySelector(".op-panel");
+  if (panel && scroll) panel.scrollTop = scroll;
 }
 
 function opFlowPage() {
@@ -374,11 +370,11 @@ function opFlowPage() {
 
 app.addEventListener("click", async (ev) => {
   const el = ev.target.closest(
-    "[data-act],[data-open],[data-sheet],[data-toggle],[data-pick],[data-preset],[data-host],[data-copy],[data-tab],[data-slot],[data-bind],[data-thumb],[data-flow-toggle]",
+    "[data-act],[data-open],[data-sheet],[data-toggle],[data-pick],[data-preset],[data-host],[data-copy],[data-tab],[data-slot],[data-bind],[data-thumb],[data-flow-toggle],[data-service],[data-layout],[data-platform],[data-setting]",
   );
   if (!el) return;
   const d = el.dataset;
-  if (d.tab || d.slot || d.bind !== undefined || d.thumb || d.flowToggle) return opClick(el);
+  if (d.tab || d.slot || d.bind !== undefined || d.thumb || d.flowToggle || d.service || d.layout || d.platform || d.setting) return opClick(el);
   if (d.open) return openDevice(d.open);
   if (d.sheet) {
     state.sheet = d.sheet;
@@ -427,6 +423,11 @@ app.addEventListener("click", async (ev) => {
       return loadDevices(true);
     case "diag":
       return diagnose();
+    case "rename": {
+      const v = app.querySelector("[data-rename]")?.value.trim();
+      if (v && v !== state.snap.name) await set("name", v);
+      return;
+    }
     case "close":
       state.sheet = null;
       state.draft = null;
@@ -445,6 +446,10 @@ app.addEventListener("click", async (ev) => {
       return render();
     case "flow-pair":
       return flowPair();
+    case "settings":
+      state.page = "settings";
+      render();
+      return loadSettings();
     case "flow-home":
       state.page = "flow";
       render();
@@ -469,7 +474,11 @@ app.addEventListener("input", (ev) => {
 
 app.addEventListener("change", (ev) => {
   const d = ev.target.dataset;
-  if (d.gesture || d.flowSide || d.dpiLive !== undefined || d.threshold !== undefined || d.backlight !== undefined) opChange(ev.target);
+  if (
+    d.gesture || d.flowSide || d.dpiLive !== undefined || d.threshold !== undefined || d.backlight !== undefined ||
+    d.sidetone !== undefined || d.mic !== undefined || d.autooff !== undefined
+  )
+    opChange(ev.target);
 });
 
 // EQ bands are dragged with the pointer. Only a press that starts on a band and is then
@@ -513,6 +522,34 @@ app.addEventListener("pointercancel", () => {
   eqDrag = null;
   render();
 });
+
+// Live view of the hardware: re-read the open device and redraw when something changed
+// on the device itself (boom flipped to mute, DPI button, backlight keys, battery...).
+// Skipped while the window is hidden or the user is in the middle of an interaction.
+let lastSnap = "";
+async function refreshLive() {
+  if (state.page !== "device" || !state.id || !state.snap || state.busy || eqDrag) return;
+  if (document.visibilityState !== "visible") return;
+  const focused = document.activeElement;
+  if (focused && ["INPUT", "SELECT", "TEXTAREA"].includes(focused.tagName)) return;
+  try {
+    const fresh = await invoke("device", { id: state.id });
+    const text = JSON.stringify(fresh);
+    if (text !== lastSnap && text !== JSON.stringify(state.snap) && state.page === "device" && !state.busy) {
+      state.snap = fresh;
+      render();
+    }
+    lastSnap = text;
+  } catch {}
+}
+// The headset answers in a few milliseconds over its USB receiver; wireless HID++ devices
+// are asked less often to spare their batteries.
+setInterval(() => {
+  if (state.snap?.kind === "headset") refreshLive();
+}, 1500);
+setInterval(() => {
+  if (state.snap && state.snap.kind !== "headset") refreshLive();
+}, 4000);
 
 // Keep battery levels fresh while the window is open.
 setInterval(() => {

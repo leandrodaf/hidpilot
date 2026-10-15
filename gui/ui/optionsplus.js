@@ -3,11 +3,17 @@
 // Shares `state`, `invoke`, `esc`, `set`, `toast`, `render` with app.js.
 
 const OP = {
-  meta: {}, // depot name -> parsed metadata json (or null when missing)
+  meta: {}, // depot name -> parsed metadata json
   remap: null,
   flow: null,
   pairCode: null,
+  layout: null,
+  services: {}, // service name -> {active, installed}
 };
+
+// Page errors go to ~/.local/state/hidpilot/gui.log.
+window.addEventListener("error", (e) => invoke("log_js", { msg: `${e.message} @ ${e.filename}:${e.lineno}` }).catch(() => {}));
+window.addEventListener("unhandledrejection", (e) => invoke("log_js", { msg: `unhandled: ${e.reason}` }).catch(() => {}));
 
 const ACTION_PT = {
   none: "Não fazer nada",
@@ -64,6 +70,14 @@ const SLOT_PT = {
   SLOT_NAME_GESTURE_UP_BUTTON: "Para cima",
   SLOT_NAME_GESTURE_DOWN_BUTTON: "Para baixo",
   SLOT_NAME_GESTURE_CLICK_BUTTON: "Clique",
+  SLOT_NAME_MUTE_UNMUTE_AUDIO: "Mudo do microfone",
+  SLOT_NAME_EASYSWITCH_1: "Canal 1",
+  SLOT_NAME_EASYSWITCH_2: "Canal 2",
+  SLOT_NAME_EASYSWITCH_3: "Canal 3",
+  SLOT_NAME_EASYSWITCH_HOST_CHANGE_BUTTON: "Botão Easy-Switch",
+  SLOT_NAME_POINTER_SETTINGS: "Velocidade do ponteiro",
+  SLOT_NAME_SCROLL_WHEEL_SETTINGS: "Roda de rolagem",
+  SLOT_NAME_THUMBWHEEL_SETTINGS: "Roda para o polegar",
   SLOT_NAME_BACKLIGHT_DOWN: "Diminuir luz de fundo",
   SLOT_NAME_BACKLIGHT_UP: "Aumentar luz de fundo",
   SLOT_NAME_DICTATION: "Ditado",
@@ -97,18 +111,15 @@ const slugOf = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").
 const cidHex = (dec) => "0x" + Number(dec).toString(16).padStart(4, "0");
 
 async function loadMeta(depot) {
-  if (depot in OP.meta) return OP.meta[depot];
-  OP.meta[depot] = null;
+  if (OP.meta[depot]) return OP.meta[depot];
   for (const f of ["core_metadata.json", "metadata.json"]) {
     try {
-      const r = await fetch(`lgasset://localhost/optionsplus/${depot}/${f}`);
-      if (r.ok) {
-        OP.meta[depot] = await r.json();
-        break;
-      }
+      OP.meta[depot] = await invoke("asset_json", { path: `optionsplus/${depot}/${f}` });
+      return OP.meta[depot];
     } catch {}
   }
-  return OP.meta[depot];
+  invoke("log_js", { msg: `no hotspot metadata for ${depot} (run scripts/fetch-logitech-assets.sh)` });
+  return null;
 }
 
 function metaImage(depot, key) {
@@ -143,6 +154,7 @@ function opHome() {
         <button class="op-link" data-act="rescan">⟳ ATUALIZAR</button>
         <span class="op-divider"></span>
         <button class="op-icon" data-act="flow-home" title="Flow">⇄</button>
+        <button class="op-icon" data-act="settings" title="Configurações">⚙</button>
       </nav>
     </header>
     <main class="op-carousel">${cards}</main>
@@ -158,9 +170,15 @@ const MOUSE_TABS = [
 ];
 const KEYBOARD_TABS = [
   ["keys", "TECLAS"],
+  ["layout", "LAYOUT"],
   ["backlight", "ILUMINAÇÃO"],
   ["easyswitch", "EASY-SWITCH"],
   ["flow", "FLOW"],
+];
+const HEADSET_TABS = [
+  ["audio", "ÁUDIO"],
+  ["settings", "CONFIGURAÇÕES"],
+  ["about", "SOBRE"],
 ];
 
 function imageKeyFor(tab, kind) {
@@ -169,7 +187,7 @@ function imageKeyFor(tab, kind) {
 }
 
 function pictureFor(s, tab) {
-  if (s.kind === "keyboard") return slugOf(s.name);
+  if (s.kind !== "mouse") return slugOf(s.name);
   if (tab === "easyswitch") return `${slugOf(s.name)}-back`;
   return `${slugOf(s.name)}-side`;
 }
@@ -177,134 +195,199 @@ function pictureFor(s, tab) {
 // Hotspot percentages refer to the metadata's origin box, with the picture centered and
 // contained in it, so the figure takes that box's proportions.
 function figureAspect(s, tab) {
+  if (s.kind === "mouse" && tab === "easyswitch") return "";
   const img = metaImage(depotOf(s.name), imageKeyFor(tab, s.kind));
   return img?.origin ? `aspect-ratio:${img.origin.width} / ${img.origin.height}` : "";
 }
 
+// Hotspots of the current tab: [{slotId, cid ("c226"), slotName, marker, styles}]
+function slots(s, tab) {
+  const img = metaImage(depotOf(s.name), imageKeyFor(tab, s.kind));
+  return (img?.assignments || []).filter((a) => a.marker).map((a) => ({ ...a, cid: a.slotId.split("_").pop(), origin: img.origin }));
+}
+
 function hotspots(s, tab) {
-  const depot = depotOf(s.name);
-  const img = metaImage(depot, imageKeyFor(tab, s.kind));
-  if (!img?.assignments) return "";
-  return img.assignments
-    .filter((a) => a.marker)
+  return slots(s, tab)
     .map((a) => {
-      const id = a.slotId.split("_").pop();
       const isKey = s.kind === "keyboard" && a.styles?.width;
       const style = isKey
-        ? `left:${a.marker.x}%;top:${a.marker.y}%;width:${(a.styles.width / img.origin.width) * 100}%;height:${(a.styles.height / img.origin.height) * 100}%`
+        ? `left:${a.marker.x}%;top:${a.marker.y}%;width:${(a.styles.width / a.origin.width) * 100}%;height:${(a.styles.height / a.origin.height) * 100}%`
         : `left:${a.marker.x}%;top:${a.marker.y}%`;
       const active = state.op?.slot === a.slotId ? "active" : "";
-      return `<button class="${isKey ? "op-hotkey" : "op-hotspot"} ${active}" style="${style}" data-slot="${esc(a.slotId)}" data-cid="${esc(id)}" data-slotname="${esc(a.slotName || "")}" title="${esc(slotLabel(a.slotName))}"></button>`;
+      return `<button class="${isKey ? "op-hotkey" : "op-hotspot"} ${active}" style="${style}" data-slot="${esc(a.slotId)}" data-cid="${esc(a.cid)}" data-slotname="${esc(a.slotName || "")}" title="${esc(slotLabel(a.slotName))}"></button>`;
     })
     .join("");
 }
 
-function opDevice(s) {
-  const tabs = s.kind === "keyboard" ? KEYBOARD_TABS : MOUSE_TABS;
-  const tab = state.op?.tab || tabs[0][0];
-  const showPicture = tab !== "flow";
+function opFrame(s, tabs, tab, stage, panel) {
   return `<div class="op">
     <header class="op-dev-header">
       <button class="op-back" data-act="home">←</button>
       <div><div class="op-dev-name">${esc(s.name)}</div>${batteryHtml(s.battery)}</div>
       <nav class="op-tabs">${tabs.map(([k, l]) => `<button class="op-tab ${k === tab ? "active" : ""}" data-tab="${k}">${l}</button>`).join("")}</nav>
     </header>
-    <div class="op-body ${state.op?.slot || tab === "flow" || tab === "backlight" ? "with-panel" : ""}">
-      ${
-        showPicture
-          ? `<div class="op-stage"><div class="op-figure op-fig-${s.kind}" style="${figureAspect(s, tab)}">
-              <img src="lgasset://localhost/devices/${pictureFor(s, tab)}.webp" alt="" onerror="this.style.display='none'">
-              ${hotspots(s, tab)}
-            </div></div>`
-          : `<div class="op-stage op-flow-stage">${flowArrangement()}</div>`
-      }
-      ${opPanel(s, tab)}
-    </div>
+    <div class="op-body with-panel">${stage}<aside class="op-panel">${panel}</aside></div>
   </div>`;
 }
 
+function opDevice(s) {
+  if (s.kind === "headset") return opHeadset(s);
+  const tabs = s.kind === "keyboard" ? KEYBOARD_TABS : MOUSE_TABS;
+  const tab = state.op?.tab || tabs[0][0];
+  const stage =
+    tab === "flow"
+      ? `<div class="op-stage op-flow-stage">${flowArrangement()}</div>`
+      : `<div class="op-stage"><div class="op-figure op-fig-${s.kind}" style="${figureAspect(s, tab)}">
+          <img src="lgasset://localhost/devices/${pictureFor(s, tab)}.webp" alt="" onerror="this.style.display='none'">
+          ${tab === "layout" || (s.kind === "mouse" && tab === "easyswitch") ? "" : hotspots(s, tab)}
+        </div></div>`;
+  return opFrame(s, tabs, tab, stage, opPanel(s, tab));
+}
+
 // ---------- side panel ----------
-function actionList(current, attr) {
+const close = `<button class="close" data-act="panel-close">✕</button>`;
+
+function actionLabel(binding) {
+  if (binding == null || binding === "default") return "Função original";
+  if (typeof binding === "object") return "Gestos";
+  return ACTION_PT[binding] || binding;
+}
+
+function actionList(current, key) {
   return Object.entries(ACTION_PT)
     .map(
       ([id, label]) =>
-        `<button class="op-option" ${attr}="${esc(id)}"><span>${esc(label)}</span><span class="radio ${current === id ? "on" : ""}"></span></button>`,
+        `<button class="op-option" data-key="${key}" data-bind="${esc(id)}"><span>${esc(label)}</span><span class="radio ${current === id ? "on" : ""}"></span></button>`,
     )
     .join("");
 }
 
-function opPanel(s, tab) {
-  const slot = state.op?.slot;
-  const close = `<button class="close" data-act="panel-close">✕</button>`;
-  const r = OP.remap;
-  if (tab === "flow") return `<aside class="op-panel">${flowPanel()}</aside>`;
-  if (tab === "backlight" && s.backlight) {
-    const b = s.backlight;
-    return `<aside class="op-panel"><h2>Configurações de iluminação</h2>
-      <div class="op-row"><span>Iluminação</span>${toggle("backlight.mode", b.mode !== "off")}</div>
-      ${b.auto ? `<div class="op-row"><span>Ajuste automático</span>${toggle("backlight.auto", b.mode === "auto")}</div>` : ""}
-      ${b.manual && b.levels > 1 ? `<div class="op-sub">NÍVEL</div><input class="line" type="range" min="0" max="${b.levels - 1}" value="${b.level}" data-backlight style="--fill:${(b.level / (b.levels - 1)) * 100}%">` : ""}
-      <p class="op-note">As teclas de luz do teclado continuam funcionando normalmente.</p></aside>`;
-  }
-  if (!slot) return "";
-  const cid = state.op.cid;
-  const name = slotLabel(state.op.slotName);
+function serviceBanner(name, what) {
+  const st = OP.services[name];
+  if (!st || st.active) return "";
+  return `<div class="op-banner"><div><b>${what} desligado</b><br>As escolhas abaixo ficam salvas, mas só funcionam com o serviço ativo.</div>
+    <button class="op-primary small" data-service="${name}">ATIVAR</button></div>`;
+}
 
-  if (tab === "point") {
-    if (cid === "settings" || /mouse_settings$/.test(slot)) {
-      const i = Math.max(0, (s.dpiChoices || []).indexOf(s.dpi));
-      const n = (s.dpiChoices || [1]).length - 1;
-      return `<aside class="op-panel">${close}<h2>Velocidade do ponteiro</h2>
-        <div class="op-sub">VELOCIDADE <b>${s.dpi ?? "—"} DPI</b></div>
-        <input class="line" type="range" min="0" max="${n}" value="${i}" data-dpi-live style="--fill:${(i / Math.max(1, n)) * 100}%"></aside>`;
-    }
-    if (/scroll_wheel_settings$/.test(slot)) {
-      const ss = s.smartshift;
-      return `<aside class="op-panel">${close}<h2>Roda de rolagem</h2>
-        ${ss ? `<div class="op-row"><span>SmartShift</span>${toggle("smartshift.ratchet", !ss.ratchet)}</div>
-        <div class="op-sub">SENSIBILIDADE DO SMARTSHIFT <b>${ss.threshold >= 50 ? "máx." : ss.threshold}</b></div>
-        <input class="line" type="range" min="1" max="50" value="${Math.min(50, ss.threshold)}" data-threshold style="--fill:${(Math.min(50, ss.threshold) / 50) * 100}%">` : ""}
-        ${s.wheel ? `<div class="op-row"><span>Rolagem suave</span>${toggle("wheel.hires", s.wheel.hires)}</div>
-        <div class="op-row"><span>Direção de rolagem natural</span>${toggle("wheel.invert", s.wheel.invert)}</div>` : ""}</aside>`;
-    }
-    if (/thumb_wheel_settings$/.test(slot)) {
-      return `<aside class="op-panel">${close}<h2>Roda para o polegar</h2>
-        ${s.thumbwheelInvert != null ? `<div class="op-row"><span>Inverter direção</span>${toggle("thumbwheelInvert", s.thumbwheelInvert)}</div>` : ""}
-        ${thumbPresets()}</aside>`;
-    }
+function opPanel(s, tab) {
+  if (tab === "flow") return serviceBanner("hidpilot-flow", "Flow") + flowPanel();
+  if (tab === "easyswitch") return easySwitchPanel(s);
+  if (tab === "layout") return layoutPanel(s);
+  if (tab === "backlight") return backlightPanel(s);
+  if (tab === "point") return pointPanel(s);
+  return controlsPanel(s, tab);
+}
+
+function easySwitchPanel(s) {
+  const h = s.hosts;
+  if (!h) return `<h2>Easy-Switch</h2><p class="op-note">Este dispositivo não informa os canais.</p>`;
+  return `<h2>Easy-Switch</h2>
+    <p class="op-note">Cada canal guarda um computador. Escolha um canal para levar o ${s.kind === "keyboard" ? "teclado" : "mouse"} até ele agora.</p>
+    ${Array.from({ length: h.count }, (_, i) => {
+      const n = h.names?.[i]?.[1] || `Canal ${i + 1}`;
+      const here = i === h.current;
+      return `<button class="op-channel ${here ? "current" : ""}" ${here ? "" : `data-host="${i}"`}>
+        <span class="op-channel-n">${i + 1}</span>
+        <span class="op-channel-name">${esc(n)}<small>${here ? "Este computador" : "Toque para trocar"}</small></span>
+      </button>`;
+    }).join("")}
+    <p class="op-note">O botão Easy-Switch embaixo do ${s.kind === "keyboard" ? "teclado (teclas 1, 2 e 3)" : "mouse"} faz o mesmo.</p>`;
+}
+
+function layoutPanel(s) {
+  const L = OP.layout;
+  const typing = !L
+    ? `<div class="spinner"></div>`
+    : L.options
+        .map(
+          (o) => `<button class="op-option tall" data-layout="${esc(o.id)}"><span><b>${esc(o.name)}</b><small>${esc(o.hint)}</small></span><span class="radio ${o.id === L.current ? "on" : ""}"></span></button>`,
+        )
+        .join("");
+  const p = s.platform;
+  const OS_PT = { linux: "Linux", windows: "Windows", macos: "macOS", ios: "iOS", android: "Android", chrome: "ChromeOS" };
+  const keysOs = p
+    ? `<div class="op-sub">TECLAS ESPECIAIS DO TECLADO</div>
+      <p class="op-note">Define como o teclado manda ⌘/Alt e as teclas de função (o mesmo que Fn+O / Fn+P).</p>
+      ${p.options
+        .map(([id, names]) => {
+          const label = names.map((n) => OS_PT[n] || n).join(", ");
+          return `<button class="op-option" data-platform="${esc(names[0])}"><span>${esc(label)}</span><span class="radio ${id === p.current ? "on" : ""}"></span></button>`;
+        })
+        .join("")}`
+    : "";
+  return `<h2>Layout de digitação</h2>
+    <p class="op-note">Como o computador entende o que você digita. Vale para todo o sistema e muda na hora.</p>
+    ${typing}
+    ${L?.smartAccents ? `<p class="op-note">✓ Acentos inteligentes do hidpilot ativos: ´+c = ç, e aspas e apóstrofos saem normais fora das vogais.</p>` : ""}
+    ${keysOs}`;
+}
+
+function backlightPanel(s) {
+  const b = s.backlight;
+  if (!b) return `<h2>Iluminação</h2><p class="op-note">Este teclado não tem iluminação.</p>`;
+  return `<h2>Iluminação</h2>
+    <div class="op-row"><span>Luz de fundo</span>${toggle("backlight.mode", b.mode !== "off")}</div>
+    ${b.auto ? `<div class="op-row"><span>Ajustar com a luz ambiente</span>${toggle("backlight.auto", b.mode === "auto")}</div>` : ""}
+    ${b.manual && b.levels > 1 ? `<div class="op-sub">NÍVEL</div><input class="line" type="range" min="0" max="${b.levels - 1}" value="${b.level}" data-backlight style="--fill:${(b.level / (b.levels - 1)) * 100}%">` : ""}
+    <p class="op-note">As teclas de luz do teclado continuam ajustando o brilho.</p>`;
+}
+
+function pointPanel(s) {
+  const i = Math.max(0, (s.dpiChoices || []).indexOf(s.dpi));
+  const n = Math.max(1, (s.dpiChoices || [1]).length - 1);
+  const ss = s.smartshift;
+  return `<h2>Ponteiro e rolagem</h2>
+    ${s.dpiChoices ? `<div class="op-sub">VELOCIDADE DO PONTEIRO <b>${s.dpi ?? "—"} DPI</b></div>
+    <input class="line" type="range" min="0" max="${n}" value="${i}" data-dpi-live style="--fill:${(i / n) * 100}%">` : ""}
+    ${ss ? `<div class="op-sub">RODA DE ROLAGEM</div>
+    <div class="op-row"><span>SmartShift (giro livre automático)</span>${toggle("smartshift.ratchet", !ss.ratchet)}</div>
+    <div class="op-sub">SENSIBILIDADE DO SMARTSHIFT <b>${ss.threshold >= 50 ? "máx." : ss.threshold}</b></div>
+    <input class="line" type="range" min="1" max="50" value="${Math.min(50, ss.threshold)}" data-threshold style="--fill:${(Math.min(50, ss.threshold) / 50) * 100}%">` : ""}
+    ${s.wheel ? `<div class="op-row"><span>Rolagem suave</span>${toggle("wheel.hires", s.wheel.hires)}</div>
+    <div class="op-row"><span>Direção de rolagem natural</span>${toggle("wheel.invert", s.wheel.invert)}</div>` : ""}
+    ${s.thumbwheelInvert != null ? `<div class="op-sub">RODA PARA O POLEGAR</div>
+    <div class="op-row"><span>Inverter direção</span>${toggle("thumbwheelInvert", s.thumbwheelInvert)}</div>` : ""}`;
+}
+
+// Buttons (mouse) and keys (keyboard): a list when nothing is picked, actions otherwise.
+function controlsPanel(s, tab) {
+  const r = OP.remap;
+  const what = s.kind === "keyboard" ? "Teclas" : "Botões";
+  const banner = serviceBanner("hidpilot-remap", "Serviço de botões e teclas");
+  if (!r) return `<h2>${what}</h2><div class="spinner"></div>`;
+  const sl = slots(s, tab);
+  const slot = state.op?.slot;
+  if (!slot) {
+    const items = sl
+      .map((a) => {
+        const key = a.cid.startsWith("c") ? cidHex(a.cid.slice(1)) : null;
+        const b = key ? r.bindings[key] : null;
+        const thumb = /thumb_wheel/.test(a.slotId);
+        const value = thumb ? THUMB_PT[typeof r.thumbwheel === "string" ? r.thumbwheel : "scroll"] : actionLabel(b);
+        return `<button class="op-option" data-slot="${esc(a.slotId)}" data-cid="${esc(a.cid)}" data-slotname="${esc(a.slotName || "")}"><span>${esc(slotLabel(a.slotName))}</span><span class="value">${esc(value)} ›</span></button>`;
+      })
+      .join("");
+    return `${banner}<h2>${what}</h2><p class="op-note">Escolha um ${s.kind === "keyboard" ? "tecla" : "botão"} na imagem ou na lista.</p>${items || `<p class="op-note">Sem dados de hotspots: rode scripts/fetch-logitech-assets.sh.</p>`}`;
   }
-  if (tab === "easyswitch") {
-    const h = s.hosts;
-    if (!h) return "";
-    return `<aside class="op-panel">${close}<h2>Easy-Switch</h2>
-      ${Array.from({ length: h.count }, (_, i) => {
-        const n = h.names?.[i]?.[1] || `Canal ${i + 1}`;
-        return `<button class="op-option" data-host="${i}"><span>${i + 1}. ${esc(n)}</span><span class="radio ${i === h.current ? "on" : ""}"></span></button>`;
-      }).join("")}
-      <p class="op-note">Trocar de canal leva o dispositivo para o outro computador.</p></aside>`;
-  }
-  // Buttons and keys.
-  if (!r) return `<aside class="op-panel">${close}<div class="spinner"></div></aside>`;
-  if (/thumb_wheel_adapter$/.test(slot)) {
-    return `<aside class="op-panel">${close}<h2>${esc(name)}</h2>${thumbPresets()}</aside>`;
-  }
-  const key = cidHex(String(cid).replace(/^c/, ""));
-  const known = r.buttons.some((b) => b.cid === key);
-  if (!known) {
-    return `<aside class="op-panel">${close}<h2>${esc(name)}</h2><p class="op-note">Este controle não pode ser personalizado neste dispositivo.</p></aside>`;
+  const back = `<button class="op-secondary" data-act="panel-close">← ${what}</button>`;
+  const name = slotLabel(state.op.slotName);
+  if (/thumb_wheel/.test(slot)) return `${banner}${back}<h2>${esc(name)}</h2>${thumbPresets()}`;
+  const key = cidHex(String(state.op.cid).replace(/^c/, ""));
+  if (!r.buttons.some((b) => b.cid === key)) {
+    return `${back}<h2>${esc(name)}</h2><p class="op-note">Este controle não pode ser personalizado neste dispositivo.</p>`;
   }
   const binding = r.bindings[key];
   if (binding && typeof binding === "object") {
-    return `<aside class="op-panel">${close}<h2>${esc(name)}</h2><div class="op-sub">GESTOS</div>
+    return `${banner}${back}<h2>${esc(name)}</h2><div class="op-sub">GESTOS (SEGURE E MOVA O MOUSE)</div>
       ${GESTURE_DIRS.map(
         ([dir, label]) => `<div class="op-row"><span>${label}</span><select data-gesture="${dir}" data-key="${key}">
           ${Object.entries(ACTION_PT).map(([id, l]) => `<option value="${id}" ${binding[dir] === id ? "selected" : ""}>${esc(l)}</option>`).join("")}
         </select></div>`,
       ).join("")}
-      <button class="op-secondary" data-bind="default" data-key="${key}">Restaurar padrão</button></aside>`;
+      <button class="op-secondary" data-bind="default" data-key="${key}">Restaurar função original</button>`;
   }
   const current = typeof binding === "string" ? binding : "default";
-  return `<aside class="op-panel">${close}<h2>${esc(name)}</h2><div class="op-list">${actionList(current, `data-key="${key}" data-bind`)}</div></aside>`;
+  return `${banner}${back}<h2>${esc(name)}</h2><div class="op-list">${actionList(current, key)}</div>`;
 }
 
 function thumbPresets() {
@@ -313,6 +396,71 @@ function thumbPresets() {
   return `<div class="op-sub">AÇÃO</div>${Object.entries(THUMB_PT)
     .map(([id, l]) => `<button class="op-option" data-thumb="${id}"><span>${l}</span><span class="radio ${curName === id ? "on" : ""}"></span></button>`)
     .join("")}`;
+}
+
+// ---------- headset, in the same frame as the other devices ----------
+function opHeadset(s) {
+  const tab = state.op?.tab || "audio";
+  const stage = `<div class="op-stage"><div class="op-headset-hero">${picture("headset", s.name)}</div></div>`;
+  let panel = "";
+  if (tab === "audio") {
+    const eq = s.equalizer || { bands: [0, 0, 0, 0, 0], preset: "Default" };
+    const pct = s.sidetone == null ? 0 : Math.round((s.sidetone / s.sidetoneMax) * 100);
+    panel = `<h2>Equalizador</h2>
+      <div class="eq-box op-eq"><div class="eq">${eqCurve(eq.bands)}${eq.bands
+        .map(
+          (v, i) => `<div class="band" data-band="${i}" role="slider" aria-label="Banda ${i + 1}" aria-valuenow="${v}">
+            <div class="rail"></div><div class="fill" style="height:${eqFrac(v) * 100}%"></div><div class="knob" style="bottom:${eqFrac(v) * 100}%"></div></div>`,
+        )
+        .join("")}</div>
+        <div class="eq-labels"><span>GRAVES</span><span>MÉDIOS</span><span>AGUDOS</span></div></div>
+      <div class="op-presets">${[...s.presets.map((p) => p.name), "Custom"]
+        .map((n) => `<button class="op-chip ${n === eq.preset ? "on" : ""}" ${n === "Custom" ? "disabled" : `data-preset="${esc(n)}"`}>${n === "Custom" ? "Personalizado" : esc(n)}</button>`)
+        .join("")}</div>
+      <div class="op-sub">SIDETONE (SUA VOZ NO FONE) <b>${pct}%</b></div>
+      <input class="line" type="range" min="0" max="${s.sidetoneMax}" value="${s.sidetone ?? 0}" data-sidetone style="--fill:${pct}%">
+      <div class="op-sub">NÍVEL DO MICROFONE <b>${s.micLevel ?? "—"}%</b></div>
+      <input class="line" type="range" min="0" max="100" step="5" value="${s.micLevel ?? 0}" data-mic style="--fill:${s.micLevel ?? 0}%">
+      <div class="op-row"><span>Microfone silenciado</span>${toggle("micMuted", s.micMuted)}</div>`;
+  } else if (tab === "settings") {
+    panel = `<h2>Configurações</h2>
+      <div class="op-sub">NOME DO DISPOSITIVO</div>
+      <div class="op-inline"><input class="text-input" maxlength="30" value="${esc(s.name)}" data-rename><button class="op-primary small" data-act="rename">SALVAR</button></div>
+      <p class="op-note">É o nome que celulares e computadores veem no Bluetooth (até 30 caracteres, sem acentos).</p>
+      <div class="op-row"><span>Girar para silenciar</span>${toggle("rotateToMute", s.rotateToMute)}</div>
+      <div class="op-row"><span>Notificações por voz</span>${toggle("voicePrompts", s.voicePrompts)}</div>
+      <div class="op-row"><span>Desligamento automático</span><select data-autooff>${[5, 10, 15, 30, 60, 120, 240]
+        .map((m) => `<option value="${m}" ${m === s.autoSleep ? "selected" : ""}>${minutesText(m)}</option>`)
+        .join("")}</select></div>
+      <div class="op-row"><span>Bluetooth conectado</span><span class="value">${s.bluetoothConnections == null ? "—" : s.bluetoothConnections === 1 ? "1 aparelho" : `${s.bluetoothConnections} aparelhos`}</span></div>`;
+  } else {
+    panel = `<h2>Sobre</h2>
+      <div class="op-row"><span>Modelo</span><span class="value">Zone Vibe Wireless</span></div>
+      <div class="op-row"><span>Número de série</span><span class="value">${esc(s.serial || "—")}</span></div>
+      <div class="op-row"><span>Bateria</span>${batteryHtml(s.battery)}</div>
+      <button class="op-primary" data-act="diag">EXECUTAR DIAGNÓSTICO</button>
+      ${(state.diag || []).map((r) => `<div class="op-row"><span>${esc(r.name)}</span><span class="value">${r.ok ? "✓ OK" : "✕ " + esc(r.detail)}</span></div>`).join("")}`;
+  }
+  return opFrame(s, HEADSET_TABS, tab, stage, panel);
+}
+// ---------- app settings ----------
+function opSettings() {
+  const st = OP.settings;
+  const body = !st
+    ? `<div class="spinner"></div>`
+    : `<div class="op-row"><span><b>Iniciar com o computador</b><small class="op-small">O hidpilot sobe ao entrar na sessão e fica na bandeja.</small></span>${settingToggle("autostart", st.autostart)}</div>
+       <div class="op-row ${st.autostart ? "" : "disabled"}"><span><b>Abrir a janela ao iniciar</b><small class="op-small">Desligado: ao entrar na sessão o hidpilot fica só na bandeja.</small></span>${settingToggle("openOnLogin", st.openOnLogin)}</div>
+       <p class="op-note">Fechar ou minimizar a janela sempre deixa o hidpilot na bandeja; para sair de vez use "Sair" no menu do ícone.</p>`;
+  return `<div class="op">
+    <header class="op-dev-header"><button class="op-back" data-act="home">←</button><div><div class="op-dev-name">Configurações</div></div></header>
+    <div class="op-settings">${body}</div>
+  </div>`;
+}
+const settingToggle = (key, on) => `<button class="toggle ${on ? "on" : ""}" data-setting="${key}"></button>`;
+
+async function loadSettings() {
+  OP.settings = await invoke("settings_get").catch(() => null);
+  render();
 }
 
 // ---------- Flow ----------
@@ -376,16 +524,51 @@ async function loadRemap() {
 }
 
 // ---------- events (registered by app.js through opClick/opChange) ----------
+async function loadServices() {
+  for (const name of ["hidpilot-remap", "hidpilot-flow"]) {
+    OP.services[name] = await invoke("service_status", { name }).catch(() => null);
+  }
+  render();
+}
+
+async function loadLayout() {
+  OP.layout = await invoke("layout_get").catch((e) => (toast(e), null));
+  render();
+}
+
+// Loads what a tab needs the first time it is shown.
+function enterTab(tab) {
+  if (tab === "flow") loadFlow();
+  if (tab === "layout") loadLayout();
+  if (tab === "buttons" || tab === "keys") loadRemap();
+  if (tab === "flow" || tab === "buttons" || tab === "keys") loadServices();
+}
+
 async function opClick(el) {
   const d = el.dataset;
   if (d.tab) {
     state.op = { tab: d.tab };
-    if (d.tab === "flow") loadFlow();
+    enterTab(d.tab);
     return render();
   }
   if (d.slot) {
     state.op = { ...state.op, slot: d.slot, cid: d.cid, slotName: d.slotname };
     if (!OP.remap) loadRemap();
+    return render();
+  }
+  if (d.service) {
+    OP.services[d.service] = await invoke("service_enable", { name: d.service }).catch((e) => (toast(e), OP.services[d.service]));
+    if (d.service === "hidpilot-flow") loadFlow();
+    return render();
+  }
+  if (d.layout) {
+    OP.layout = await invoke("layout_set", { id: d.layout }).catch((e) => (toast(e), OP.layout));
+    toast("Layout aplicado");
+    return render();
+  }
+  if (d.platform) return set("platform", d.platform);
+  if (d.setting) {
+    OP.settings = await invoke("settings_set", { key: d.setting, value: !el.classList.contains("on") }).catch((e) => (toast(e), OP.settings));
     return render();
   }
   if (d.bind !== undefined && d.key) {
@@ -417,6 +600,9 @@ async function opChange(el) {
     return render();
   }
   if (d.dpiLive !== undefined) return set("dpi", state.snap.dpiChoices[Number(el.value)]);
+  if (d.sidetone !== undefined) return set("sidetone", Number(el.value));
+  if (d.mic !== undefined) return set("micLevel", Number(el.value));
+  if (d.autooff !== undefined) return set("autoSleep", Number(el.value));
   if (d.threshold !== undefined) return set("smartshift.threshold", Number(el.value));
   if (d.backlight !== undefined) return set("backlight.level", Number(el.value));
   return false;
