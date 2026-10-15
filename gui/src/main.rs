@@ -667,10 +667,14 @@ fn apply_settings(s: AppSettings) -> Result<()> {
     let entry = autostart_path();
     if s.autostart {
         std::fs::create_dir_all(entry.parent().unwrap())?;
+        // Full path: at login ~/.local/bin may not be on PATH yet.
+        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "hidpilot-gui".into());
         std::fs::write(
             &entry,
-            "[Desktop Entry]\nType=Application\nName=hidpilot\nComment=Logitech devices in the tray\n\
-             Exec=hidpilot-gui --login\nIcon=hidpilot\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+            format!(
+                "[Desktop Entry]\nType=Application\nName=hidpilot\nComment=Logitech devices in the tray\n\
+                 Exec=\"{exe}\" --login\nIcon=hidpilot\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+            ),
         )?;
     } else if entry.exists() {
         std::fs::remove_file(&entry)?;
@@ -721,8 +725,8 @@ fn main() {
         }))
         .register_uri_scheme_protocol("lgasset", |_ctx, req| serve_asset(req.uri().path()))
         .setup(|app| {
-            if !settings_path().exists() {
-                if let Err(e) = apply_settings(AppSettings::default()) {
+            {
+                if let Err(e) = apply_settings(load_settings()) {
                     logln!("settings: could not write defaults: {e:#}");
                 }
             }
