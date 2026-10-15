@@ -32,6 +32,7 @@ pub mod feature {
     pub const THUMB_WHEEL: u16 = 0x2150;
     pub const ADJUSTABLE_DPI: u16 = 0x2201;
     pub const K375S_FN_INVERSION: u16 = 0x40a3;
+    pub const MULTIPLATFORM: u16 = 0x4531;
 }
 
 #[derive(Debug)]

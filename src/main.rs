@@ -1,7 +1,9 @@
+mod daemon;
 mod features;
 mod hidpp;
 #[allow(dead_code)] // feature-report helpers are for the upcoming headset backend
 mod hidraw;
+mod uhid;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -60,10 +62,14 @@ enum Cmd {
     },
     /// Show or set whether F1-F12 act as function keys without holding Fn
     FnKeys { device: String, state: Option<Toggle> },
+    /// Show or set which OS the keys are laid out for (same as holding Fn+O / Fn+P)
+    Platform { device: String, os: Option<String> },
     /// Show Easy-Switch hosts, or switch to host N (1-3)
     Host { device: String, number: Option<u8> },
     /// List the device's reprogrammable buttons
     Buttons { device: String },
+    /// Run the background service (publishes batteries to GNOME; needs root)
+    Daemon,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -202,6 +208,14 @@ fn main() -> Result<()> {
                 None => print_hosts(&mut d)?,
             }
         }
+        Cmd::Platform { device, os } => {
+            let mut d = open(&device)?;
+            if let Some(os) = os {
+                features::set_platform(&mut d, &os)?;
+            }
+            print_platforms(&mut d)?;
+        }
+        Cmd::Daemon => daemon::run()?,
         Cmd::Buttons { device } => {
             let mut d = open(&device)?;
             for c in features::controls(&mut d)? {
@@ -247,6 +261,15 @@ fn print_backlight(d: &mut Device) -> Result<()> {
         println!("backlight: {mode}, level {} (0-{})", b.level, b.levels - 1);
     } else {
         println!("backlight: {mode}");
+    }
+    Ok(())
+}
+
+fn print_platforms(d: &mut Device) -> Result<()> {
+    let p = features::platforms(d)?;
+    for (id, names) in &p.options {
+        let mark = if *id == p.current { "*" } else { " " };
+        println!("{mark} {}", names.join(", "));
     }
     Ok(())
 }
@@ -297,6 +320,10 @@ fn info(d: &mut Device) -> Result<()> {
     }
     if d.has(f::K375S_FN_INVERSION) {
         println!("  F1-F12 without Fn: {}", on_off(features::fn_inverted(d)?));
+    }
+    if d.has(f::MULTIPLATFORM) {
+        println!("  OS key layout:");
+        print_platforms(d)?;
     }
     if d.has(f::CHANGE_HOST) {
         println!("  Easy-Switch hosts:");

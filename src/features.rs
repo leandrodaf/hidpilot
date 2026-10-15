@@ -252,6 +252,67 @@ pub fn set_fn_inverted(dev: &mut Device, on: bool) -> Result<()> {
     Ok(())
 }
 
+// ---------- OS key layout, Fn+O / Fn+P (0x4531) ----------
+
+pub struct Platforms {
+    pub current: u8,
+    pub settable: bool,
+    /// (platform id, OS names) as declared by the device.
+    pub options: Vec<(u8, Vec<&'static str>)>,
+}
+
+const OS_BITS: [(&str, u16); 9] = [
+    ("linux", 0x0400),
+    ("macos", 0x2000),
+    ("windows", 0x0100),
+    ("ios", 0x4000),
+    ("android", 0x1000),
+    ("webos", 0x8000),
+    ("chrome", 0x0800),
+    ("windows-embedded", 0x0200),
+    ("tizen", 0x0001),
+];
+
+pub fn platforms(dev: &mut Device) -> Result<Platforms> {
+    let r = dev.call(f::MULTIPLATFORM, 0, &[])?;
+    let (flags, count, current) = (r[0], r[2], r[6]);
+    let mut options: Vec<(u8, Vec<&'static str>)> = Vec::new();
+    for i in 0..count {
+        let d = dev.call(f::MULTIPLATFORM, 1, &[i])?;
+        let (platform, os_flags) = (d[0], u16::from_be_bytes([d[2], d[3]]));
+        let names: Vec<&str> = OS_BITS.iter().filter(|(_, bit)| os_flags & bit != 0).map(|(n, _)| *n).collect();
+        match options.iter_mut().find(|(p, _)| *p == platform) {
+            Some((_, existing)) => {
+                for n in names {
+                    if !existing.contains(&n) {
+                        existing.push(n);
+                    }
+                }
+            }
+            None => options.push((platform, names)),
+        }
+    }
+    Ok(Platforms { current, settable: flags & 0x02 != 0, options })
+}
+
+/// Switches the key layout to the platform that lists `os` (e.g. "linux", "macos").
+pub fn set_platform(dev: &mut Device, os: &str) -> Result<u8> {
+    let p = platforms(dev)?;
+    if !p.settable {
+        bail!("this device does not allow changing its OS layout");
+    }
+    let os = os.to_lowercase();
+    let lists = |os: &str| p.options.iter().find(|(_, names)| names.iter().any(|n| *n == os));
+    // Logitech's "Fn+P" layout covers Linux, Android and ChromeOS even when only Windows is declared.
+    let found = lists(&os).or_else(|| matches!(os.as_str(), "linux" | "android" | "chrome").then(|| lists("windows")).flatten());
+    let Some((id, _)) = found else {
+        bail!("unknown OS \"{os}\"; options: {}", p.options.iter().flat_map(|(_, n)| n.clone()).collect::<Vec<_>>().join(", "));
+    };
+    // 0xFF = the host the device is currently connected to
+    dev.call(f::MULTIPLATFORM, 3, &[0xFF, *id])?;
+    Ok(*id)
+}
+
 // ---------- keyboard backlight (0x1982) ----------
 
 pub struct Backlight {
