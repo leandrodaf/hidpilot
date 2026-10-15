@@ -176,7 +176,7 @@ impl Device {
     }
 
     /// Answers a root ping quickly; false for empty or sleeping slots.
-    fn ping(&mut self) -> bool {
+    pub fn ping(&mut self) -> bool {
         match self.call_index(0, 1, &[0, 0, 0x5A], PROBE_TIMEOUT) {
             Ok(_) => true,
             Err(e) => {

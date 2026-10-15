@@ -39,6 +39,17 @@ pub fn firmware(dev: &mut Device) -> Result<Vec<Firmware>> {
     Ok(out)
 }
 
+/// Unit ID: identifies this physical device across hosts and connections.
+pub fn unit_id(dev: &mut Device) -> Result<String> {
+    let r = dev.call(f::FIRMWARE, 0, &[])?;
+    Ok(r[1..5].iter().map(|b| format!("{b:02X}")).collect())
+}
+
+/// Device type from DEVICE_NAME fn 2: 0 keyboard, 2 numpad, 3 mouse, 4 trackpad, 5 trackball.
+pub fn is_keyboard(dev: &mut Device) -> bool {
+    matches!(dev.call(f::DEVICE_NAME, 2, &[]).map(|r| r[0]), Ok(0) | Ok(2))
+}
+
 // ---------- battery (0x1004) ----------
 
 pub struct Battery {
