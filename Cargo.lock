@@ -1896,6 +1896,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "toml 1.1.8+spec-1.1.0",
+ "x11rb 0.14.0",
 ]
 
 [[package]]

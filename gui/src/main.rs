@@ -1,6 +1,9 @@
 //! Desktop app: a webview UI over the same device code the CLI uses.
 
+mod logfile;
 mod tray;
+#[cfg(target_os = "linux")]
+mod x11;
 
 use anyhow::{Context, Result, anyhow};
 use hidpilot::centurion::{self, Headset};
@@ -521,13 +524,32 @@ fn flow_pair() -> Result<String, String> {
 }
 
 fn main() {
+    logfile::init();
+    logln!(
+        "start {} session={:?} display={:?} desktop={:?}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::var("XDG_SESSION_TYPE").ok(),
+        std::env::var("DISPLAY").ok(),
+        std::env::var("XDG_CURRENT_DESKTOP").ok()
+    );
     tauri::Builder::default()
         // Opening hidpilot again (app menu, dock) brings back the running window from
         // the tray instead of starting a second, hidden copy.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            logln!("second launch: showing the running window");
+            tray::show_window(app);
+        }))
         .register_uri_scheme_protocol("lgasset", |_ctx, req| serve_asset(req.uri().path()))
         .setup(|app| {
-            tray::install(app.handle())?;
+            if let Err(e) = tray::install(app.handle()) {
+                logln!("tray: failed to install: {e}");
+            }
+            // Report how the window manager received the first window.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                #[cfg(target_os = "linux")]
+                x11::log_state("startup");
+            });
             Ok(())
         })
         .on_window_event(tray::hide_on_close)

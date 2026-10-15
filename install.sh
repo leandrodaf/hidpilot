@@ -14,7 +14,8 @@ YES=0
 BIN="$HOME/.local/bin"
 UNITS="$HOME/.config/systemd/user"
 APPS="$HOME/.local/share/applications"
-ICONS="$HOME/.local/share/icons/hicolor/scalable/apps"
+HICOLOR="$HOME/.local/share/icons/hicolor"
+ICONS="$HICOLOR/scalable/apps"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
@@ -43,6 +44,14 @@ if [[ $GUI == 1 ]]; then
     install -Dm755 target/release/hidpilot-gui "$BIN/hidpilot-gui"
     install -Dm644 packaging/hidpilot.desktop "$APPS/hidpilot.desktop"
     install -Dm644 packaging/hidpilot.svg "$ICONS/hidpilot.svg"
+    # PNG copies for docks and menus that skip SVG, then refresh the icon cache:
+    # a stale ~/.local/share/icons/hicolor/icon-theme.cache hides new icons.
+    for size in 48 64 128 256; do
+        install -Dm644 "packaging/icons/hidpilot-$size.png" "$HICOLOR/${size}x${size}/apps/hidpilot.png"
+    done
+    if command -v gtk-update-icon-cache >/dev/null; then
+        gtk-update-icon-cache -q -f -t "$HICOLOR" || true
+    fi
     if command -v update-desktop-database >/dev/null; then
         update-desktop-database -q "$APPS" || true
     fi

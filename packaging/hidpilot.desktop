@@ -10,4 +10,4 @@ Icon=hidpilot
 Terminal=false
 Categories=Settings;HardwareSettings;
 Keywords=logitech;mouse;keyboard;headset;dpi;battery;flow;
-StartupWMClass=hidpilot
+StartupWMClass=hidpilot-gui
