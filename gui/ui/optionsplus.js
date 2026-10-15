@@ -64,7 +64,26 @@ const SLOT_PT = {
   SLOT_NAME_GESTURE_UP_BUTTON: "Para cima",
   SLOT_NAME_GESTURE_DOWN_BUTTON: "Para baixo",
   SLOT_NAME_GESTURE_CLICK_BUTTON: "Clique",
+  SLOT_NAME_BACKLIGHT_DOWN: "Diminuir luz de fundo",
+  SLOT_NAME_BACKLIGHT_UP: "Aumentar luz de fundo",
+  SLOT_NAME_DICTATION: "Ditado",
+  SLOT_NAME_EMOJI: "Emoji",
+  SLOT_NAME_SCREENSHOT: "Captura de tela",
+  SLOT_NAME_SCREEN_CAPTURE: "Captura de tela",
+  SLOT_NAME_MIC_MUTE: "Mudo do microfone",
+  SLOT_NAME_MUTE_MICROPHONE: "Mudo do microfone",
+  SLOT_NAME_SEARCH: "Pesquisa",
+  SLOT_NAME_PLAY_PAUSE: "Reproduzir/pausar",
+  SLOT_NAME_MUTE: "Mudo",
+  SLOT_NAME_VOLUME_DOWN: "Diminuir volume",
+  SLOT_NAME_VOLUME_UP: "Aumentar volume",
+  SLOT_NAME_HOME: "Home",
+  SLOT_NAME_END: "End",
+  SLOT_NAME_PAGE_UP: "Page Up",
+  SLOT_NAME_PAGE_DOWN: "Page Down",
 };
+// Unknown slot names still read decently: SLOT_NAME_FOO_BAR -> "Foo bar".
+const slotLabel = (n) => SLOT_PT[n] || String(n || "Botão").replace(/^SLOT_NAME_/, "").replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
 const GESTURE_DIRS = [
   ["click", "Clique"],
   ["up", "Para cima"],
@@ -155,6 +174,13 @@ function pictureFor(s, tab) {
   return `${slugOf(s.name)}-side`;
 }
 
+// Hotspot percentages refer to the metadata's origin box, with the picture centered and
+// contained in it, so the figure takes that box's proportions.
+function figureAspect(s, tab) {
+  const img = metaImage(depotOf(s.name), imageKeyFor(tab, s.kind));
+  return img?.origin ? `aspect-ratio:${img.origin.width} / ${img.origin.height}` : "";
+}
+
 function hotspots(s, tab) {
   const depot = depotOf(s.name);
   const img = metaImage(depot, imageKeyFor(tab, s.kind));
@@ -168,7 +194,7 @@ function hotspots(s, tab) {
         ? `left:${a.marker.x}%;top:${a.marker.y}%;width:${(a.styles.width / img.origin.width) * 100}%;height:${(a.styles.height / img.origin.height) * 100}%`
         : `left:${a.marker.x}%;top:${a.marker.y}%`;
       const active = state.op?.slot === a.slotId ? "active" : "";
-      return `<button class="${isKey ? "op-hotkey" : "op-hotspot"} ${active}" style="${style}" data-slot="${esc(a.slotId)}" data-cid="${esc(id)}" data-slotname="${esc(a.slotName || "")}" title="${esc(SLOT_PT[a.slotName] || a.slotName || "")}"></button>`;
+      return `<button class="${isKey ? "op-hotkey" : "op-hotspot"} ${active}" style="${style}" data-slot="${esc(a.slotId)}" data-cid="${esc(id)}" data-slotname="${esc(a.slotName || "")}" title="${esc(slotLabel(a.slotName))}"></button>`;
     })
     .join("");
 }
@@ -186,7 +212,7 @@ function opDevice(s) {
     <div class="op-body ${state.op?.slot || tab === "flow" || tab === "backlight" ? "with-panel" : ""}">
       ${
         showPicture
-          ? `<div class="op-stage"><div class="op-figure op-fig-${s.kind}">
+          ? `<div class="op-stage"><div class="op-figure op-fig-${s.kind}" style="${figureAspect(s, tab)}">
               <img src="lgasset://localhost/devices/${pictureFor(s, tab)}.webp" alt="" onerror="this.style.display='none'">
               ${hotspots(s, tab)}
             </div></div>`
@@ -222,7 +248,7 @@ function opPanel(s, tab) {
   }
   if (!slot) return "";
   const cid = state.op.cid;
-  const name = SLOT_PT[state.op.slotName] || state.op.slotName || "Botão";
+  const name = slotLabel(state.op.slotName);
 
   if (tab === "point") {
     if (cid === "settings" || /mouse_settings$/.test(slot)) {

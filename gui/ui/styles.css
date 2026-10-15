@@ -229,13 +229,13 @@ input[type="range"].line::-webkit-slider-thumb { -webkit-appearance: none; width
 .op-figure img { display: block; max-width: 100%; max-height: 100%; }
 .op-fig-mouse { height: min(480px, 70vh); aspect-ratio: 636 / 1024; }
 .op-fig-mouse img { height: 100%; width: 100%; object-fit: contain; }
-.op-fig-keyboard { width: min(820px, 90%); aspect-ratio: 1889 / 800; }
+.op-fig-keyboard { width: min(820px, 90%); aspect-ratio: 1872 / 728; }
 .op-fig-keyboard img { width: 100%; height: 100%; object-fit: contain; }
 
 .op-hotspot { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 2px solid var(--op-hotspot-border) !important; background: transparent; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)); transition: border-color 0.1s, background 0.1s; }
 .op-hotspot:hover { border-color: var(--op-hotspot-hover) !important; }
 .op-hotspot.active { background: var(--op-primary-darker); border-color: var(--op-primary) !important; }
-.op-hotkey { position: absolute; transform: translate(-50%, -50%); border-radius: 4px; border: 2px solid transparent !important; background: transparent; }
+.op-hotkey { position: absolute; transform: translate(-50%, -50%); border-radius: 4px; border: 2px solid var(--op-hotspot-border) !important; background: transparent; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)); }
 .op-hotkey:hover { border-color: var(--op-hotspot-hover) !important; }
 .op-hotkey.active { background: var(--op-primary-transparent); border-color: var(--op-primary) !important; }
 
@@ -251,7 +251,7 @@ input[type="range"].line::-webkit-slider-thumb { -webkit-appearance: none; width
 .op .toggle.on, .op .radio.on { --primary: var(--op-primary); }
 .op .toggle.on { background: var(--op-primary); }
 .op .radio.on { border: 5px solid var(--op-primary); background: #fff; }
-.op .line { background: linear-gradient(var(--op-primary), var(--op-primary)) 0 / var(--fill, 50%) 100% no-repeat, var(--track); }
+.op input[type="range"].line { background: linear-gradient(var(--op-primary), var(--op-primary)) 0 / var(--fill, 50%) 100% no-repeat, var(--track); }
 .op .value { color: var(--op-primary); }
 .op-note { color: var(--op-soft); font-size: 13px; line-height: 1.5; }
 .op-note code { font-size: 12px; }
