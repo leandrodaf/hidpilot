@@ -50,9 +50,12 @@ async function openDevice(id) {
   state.id = id;
   state.page = "device";
   state.snap = null;
+  state.op = null;
+  OP.remap = null;
   render();
   try {
     state.snap = await invoke("device", { id });
+    if (state.snap.kind !== "headset") await loadMeta(depotOf(state.snap.name));
   } catch (e) {
     toast(e);
     state.page = "home";
@@ -346,19 +349,36 @@ async function diagnose() {
 function render() {
   const s = state.snap;
   let html;
-  if (state.page === "home" || (!s && state.page !== "device")) html = home();
-  else if (!s) html = `${topbar()}<div class="spinner"></div>`;
-  else if (state.page === "eq") html = eqPage(s);
-  else if (state.page === "about") html = aboutPage(s);
-  else if (state.page === "connections") html = connectionsPage(s);
-  else html = s.kind === "headset" ? headsetPage(s) : hidppPage(s);
-  app.innerHTML = html + sheet();
+  if (state.page === "flow") html = opFlowPage();
+  else if (state.page === "home" || (!s && state.page !== "device")) html = opHome();
+  else if (!s) html = `<div class="spinner"></div>`;
+  else if (s.kind !== "headset") html = opDevice(s);
+  else {
+    // Headsets use Logi Tune's screens, in a column like Tune's own window.
+    let inner;
+    if (state.page === "eq") inner = eqPage(s);
+    else if (state.page === "about") inner = aboutPage(s);
+    else if (state.page === "connections") inner = connectionsPage(s);
+    else inner = headsetPage(s);
+    html = `<div class="tune-shell"><div class="tune-col">${inner}${sheet()}</div></div>`;
+  }
+  app.innerHTML = html;
+}
+
+function opFlowPage() {
+  return `<div class="op">
+    <header class="op-dev-header"><button class="op-back" data-act="home">←</button><div><div class="op-dev-name">Flow</div></div></header>
+    <div class="op-body with-panel"><div class="op-stage op-flow-stage">${flowArrangement()}</div><aside class="op-panel">${flowPanel()}</aside></div>
+  </div>`;
 }
 
 app.addEventListener("click", async (ev) => {
-  const el = ev.target.closest("[data-act],[data-open],[data-sheet],[data-toggle],[data-pick],[data-preset],[data-host],[data-copy]");
+  const el = ev.target.closest(
+    "[data-act],[data-open],[data-sheet],[data-toggle],[data-pick],[data-preset],[data-host],[data-copy],[data-tab],[data-slot],[data-bind],[data-thumb],[data-flow-toggle]",
+  );
   if (!el) return;
   const d = el.dataset;
+  if (d.tab || d.slot || d.bind !== undefined || d.thumb || d.flowToggle) return opClick(el);
   if (d.open) return openDevice(d.open);
   if (d.sheet) {
     state.sheet = d.sheet;
@@ -370,6 +390,7 @@ app.addEventListener("click", async (ev) => {
     // SmartShift's switch shows "on" for free spin enabled automatically, i.e. not ratchet.
     if (d.toggle === "smartshift.ratchet") return set(d.toggle, cur);
     if (d.toggle === "backlight.mode") return set(d.toggle, cur ? "off" : "on");
+    if (d.toggle === "backlight.auto") return set("backlight.mode", cur ? "on" : "auto");
     return set(d.toggle, !cur);
   }
   if (d.pick) {
@@ -390,6 +411,7 @@ app.addEventListener("click", async (ev) => {
     case "home":
       state.page = "home";
       state.snap = null;
+      state.op = null;
       return loadDevices();
     case "device":
       state.page = "device";
@@ -418,6 +440,15 @@ app.addEventListener("click", async (ev) => {
       return;
     case "sheet-ok":
       return sheetOk();
+    case "panel-close":
+      state.op = { tab: state.op?.tab };
+      return render();
+    case "flow-pair":
+      return flowPair();
+    case "flow-home":
+      state.page = "flow";
+      render();
+      return loadFlow();
   }
 });
 
@@ -434,6 +465,11 @@ app.addEventListener("input", (ev) => {
   } else if (t.dataset.name !== undefined) {
     state.draft = t.value;
   }
+});
+
+app.addEventListener("change", (ev) => {
+  const d = ev.target.dataset;
+  if (d.gesture || d.flowSide || d.dpiLive !== undefined || d.threshold !== undefined || d.backlight !== undefined) opChange(ev.target);
 });
 
 // EQ bands are dragged with the pointer. Only a press that starts on a band and is then

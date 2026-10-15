@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use hidpilot::centurion::{self, Headset};
 use hidpilot::features::{self as feat, BacklightMode};
 use hidpilot::hidpp::{self, Device, feature as f};
+use hidpilot::remap;
 use serde_json::{Value, json};
 use std::sync::Mutex;
 
@@ -348,8 +349,182 @@ fn serve_asset(path: &str) -> tauri::http::Response<Vec<u8>> {
     tauri::http::Response::builder().header("Content-Type", mime).body(data).unwrap()
 }
 
+// ---------- buttons, gestures and thumb wheel (served by `hidpilot remap run`) ----------
+
+#[tauri::command(async)]
+fn remap_get(state: tauri::State<State>, id: String) -> Result<Value, String> {
+    with_device(&state, &id, |t| {
+        let Target::Hidpp(dev) = t else { anyhow::bail!("not a mouse or keyboard") };
+        let unit = feat::unit_id(dev)?;
+        let buttons = remap::buttons(dev).unwrap_or_default();
+        let cfg = remap::Config::load()?;
+        let profile = cfg.effective(&unit, "", !feat::is_keyboard(dev));
+        Ok(json!({
+            "unit": unit,
+            "buttons": buttons,
+            "bindings": profile.buttons,
+            "thumbwheel": profile.thumbwheel,
+            "actions": remap::ACTIONS,
+            "thumbPresets": remap::THUMB_PRESETS,
+        }))
+    })
+}
+
+/// `binding`: an action id, a gesture table, or null to give the control back.
+#[tauri::command(async)]
+fn remap_set(state: tauri::State<State>, id: String, cid: String, binding: Value) -> Result<(), String> {
+    with_device(&state, &id, |t| {
+        let Target::Hidpp(dev) = t else { anyhow::bail!("not a mouse or keyboard") };
+        let unit = feat::unit_id(dev)?;
+        let is_mouse = !feat::is_keyboard(dev);
+        let mut cfg = remap::Config::load()?;
+        // Start from what is in effect, so a mouse keeps its default gestures.
+        let current = cfg.effective(&unit, "", is_mouse);
+        let entry = cfg.devices.entry(unit).or_default();
+        entry.name = dev.name.clone();
+        if entry.profile.buttons.is_empty() {
+            entry.profile.buttons = current.buttons;
+        }
+        if binding.is_null() {
+            entry.profile.buttons.remove(&cid);
+        } else {
+            let b: remap::Binding = serde_json::from_value(binding).context("bad binding")?;
+            entry.profile.buttons.insert(cid, b);
+        }
+        cfg.save()
+    })
+}
+
+#[tauri::command(async)]
+fn thumbwheel_set(state: tauri::State<State>, id: String, preset: String) -> Result<(), String> {
+    with_device(&state, &id, |t| {
+        let Target::Hidpp(dev) = t else { anyhow::bail!("not a mouse") };
+        let unit = feat::unit_id(dev)?;
+        let mut cfg = remap::Config::load()?;
+        let entry = cfg.devices.entry(unit).or_default();
+        entry.name = dev.name.clone();
+        entry.profile.thumbwheel = if preset == "scroll" { None } else { Some(remap::Wheel::Preset(preset)) };
+        cfg.save()
+    })
+}
+
+// ---------- Flow (settings shared with `hidpilot-flow`, which reloads them) ----------
+
+fn flow_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .unwrap_or_default();
+    base.join("hidpilot/flow.toml")
+}
+
+fn flow_load() -> Result<toml::Table> {
+    let text = std::fs::read_to_string(flow_path()).context("Flow is not set up yet: run hidpilot-flow once")?;
+    Ok(text.parse()?)
+}
+
+fn flow_save(t: &toml::Table) -> Result<()> {
+    let p = flow_path();
+    let tmp = p.with_extension("toml.tmp");
+    std::fs::write(&tmp, toml::to_string_pretty(t)?)?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    std::fs::rename(&tmp, &p)?;
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn flow_get() -> Result<Value, String> {
+    let t = flow_load().map_err(err)?;
+    let peers: Vec<Value> = t
+        .get("peers")
+        .and_then(|p| p.as_table())
+        .map(|p| {
+            p.iter()
+                .map(|(k, v)| json!({"key": k, "name": v.get("name").and_then(|x| x.as_str()), "side": v.get("side").and_then(|x| x.as_str())}))
+                .collect()
+        })
+        .unwrap_or_default();
+    // Never hand the private key to the page.
+    Ok(json!({
+        "name": t.get("name").and_then(|x| x.as_str()),
+        "id": t.get("public_key").and_then(|x| x.as_str()).map(|k| k.chars().take(16).collect::<String>()),
+        "clipboard": t.get("clipboard").and_then(|x| x.as_bool()).unwrap_or(true),
+        "keyboardFollows": t.get("keyboard_follows").and_then(|x| x.as_bool()).unwrap_or(true),
+        "peers": peers,
+        "running": std::process::Command::new("pgrep").args(["-x", "hidpilot-flow"]).status().map(|s| s.success()).unwrap_or(false),
+    }))
+}
+
+#[tauri::command(async)]
+fn flow_set(key: String, value: Value, peer: Option<String>) -> Result<Value, String> {
+    let mut t = flow_load().map_err(err)?;
+    match (key.as_str(), peer) {
+        ("clipboard", None) => {
+            t.insert("clipboard".into(), toml::Value::Boolean(value.as_bool().ok_or("expected true/false")?));
+        }
+        ("keyboardFollows", None) => {
+            t.insert("keyboard_follows".into(), toml::Value::Boolean(value.as_bool().ok_or("expected true/false")?));
+        }
+        ("side", Some(peer)) => {
+            let side = value.as_str().filter(|s| ["left", "right", "top", "bottom"].contains(s));
+            let peers = t.get_mut("peers").and_then(|p| p.as_table_mut()).ok_or("no peers")?;
+            // One screen per side.
+            if let Some(s) = side {
+                for (k, v) in peers.iter_mut() {
+                    if *k != peer && v.get("side").and_then(|x| x.as_str()) == Some(s) {
+                        v.as_table_mut().unwrap().remove("side");
+                    }
+                }
+            }
+            let entry = peers.get_mut(&peer).and_then(|v| v.as_table_mut()).ok_or("unknown computer")?;
+            match side {
+                Some(s) => entry.insert("side".into(), toml::Value::String(s.into())),
+                None => entry.remove("side"),
+            };
+        }
+        ("forget", Some(peer)) => {
+            if let Some(p) = t.get_mut("peers").and_then(|p| p.as_table_mut()) {
+                p.remove(&peer);
+            }
+        }
+        _ => return Err(format!("unknown Flow setting {key}")),
+    }
+    flow_save(&t).map_err(err)?;
+    flow_get()
+}
+
+/// Opens the pairing window (`hidpilot-flow pair`) and returns the code it shows.
+#[tauri::command(async)]
+fn flow_pair() -> Result<String, String> {
+    use std::io::{BufRead, BufReader};
+    let mut child = std::process::Command::new("hidpilot-flow")
+        .arg("pair")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("hidpilot-flow not found: {e}"))?;
+    let out = child.stdout.take().unwrap();
+    let mut lines = BufReader::new(out).lines();
+    let first = lines.next().ok_or("pairing did not start")?.map_err(|e| e.to_string())?;
+    // "Pairing code for NAME: 123  456"
+    let code: String = first.rsplit(':').next().unwrap_or("").chars().filter(|c| c.is_ascii_digit()).collect();
+    // Keep reading so the child never blocks on a full pipe; it exits on its own.
+    std::thread::spawn(move || {
+        for _ in lines {}
+        let _ = child.wait();
+    });
+    if code.len() != 6 {
+        return Err("could not read the pairing code".into());
+    }
+    Ok(code)
+}
+
 fn main() {
     tauri::Builder::default()
+        // Opening hidpilot again (app menu, dock) brings back the running window from
+        // the tray instead of starting a second, hidden copy.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app)))
         .register_uri_scheme_protocol("lgasset", |_ctx, req| serve_asset(req.uri().path()))
         .setup(|app| {
             tray::install(app.handle())?;
@@ -357,7 +532,7 @@ fn main() {
         })
         .on_window_event(tray::hide_on_close)
         .manage(State(Mutex::new(Devices::default())))
-        .invoke_handler(tauri::generate_handler![devices, device, set])
+        .invoke_handler(tauri::generate_handler![devices, device, set, remap_get, remap_set, thumbwheel_set, flow_get, flow_set, flow_pair])
         .run(tauri::generate_context!())
         .expect("failed to start hidpilot");
 }

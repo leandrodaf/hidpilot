@@ -12,8 +12,10 @@ use tauri::{AppHandle, Manager, Runtime, Window, WindowEvent};
 const TRAY_ID: &str = "hidpilot";
 const STATUS_ID: &str = "status";
 
-fn show_window<R: Runtime>(app: &AppHandle<R>) {
+/// Brings the window back from the tray: shown, restored and focused, in that order.
+pub fn show_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
+        let _ = w.set_skip_taskbar(false);
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
@@ -26,7 +28,8 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Abrir hidpilot", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&status, &separator, &open, &quit])?;
+    // On GNOME a click on the icon only opens this menu, so "open" comes first.
+    let menu = Menu::with_items(app, &[&open, &separator, &status, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("hidpilot")
@@ -72,10 +75,12 @@ pub fn hide_on_close<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
             let _ = window.hide();
             api.prevent_close();
         }
-        // Minimizing shows up as a resize; hide so only the tray icon remains.
+        // Minimizing shows up as a resize. The window stays minimized, as the window
+        // manager left it, and only leaves the dock and Alt+Tab, so the tray icon is what
+        // brings it back. Never hide it here: unmapping a window while the window
+        // manager is minimizing it leaves Mutter with a window it will not show again.
         WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
-            let _ = window.unminimize();
-            let _ = window.hide();
+            let _ = window.set_skip_taskbar(true);
         }
         _ => {}
     }
