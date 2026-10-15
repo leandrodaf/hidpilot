@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>hidpilot</title></head>
+<body>
+<pre id="out">carregando…</pre>
+<script>
+const { invoke } = window.__TAURI__.core;
+invoke('devices', { rescan: false }).then(d => out.textContent = JSON.stringify(d, null, 2)).catch(e => out.textContent = e);
+</script>
+</body>
+</html>

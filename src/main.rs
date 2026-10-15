@@ -1,15 +1,8 @@
-mod centurion;
-mod daemon;
-mod features;
-mod hidpp;
-#[allow(dead_code)] // feature-report helpers are unused so far
-mod hidraw;
-mod uhid;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use features::BacklightMode;
-use hidpp::{Device, feature as f};
+use hidpilot::features::BacklightMode;
+use hidpilot::hidpp::{Device, feature as f};
+use hidpilot::{centurion, daemon, features, hidpp};
 
 #[derive(Parser)]
 #[command(version, about = "Configure Logitech mice, keyboards and headsets on Linux")]

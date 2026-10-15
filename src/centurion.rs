@@ -103,7 +103,6 @@ impl Headset {
         self.send(i, function, params)
     }
 
-    #[allow(dead_code)]
     pub fn has(&mut self, id: u16) -> bool {
         matches!(self.index(id), Ok(Some(_)))
     }
