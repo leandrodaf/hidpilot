@@ -15,5 +15,6 @@ pub mod hidraw;
 pub mod daemon;
 #[cfg(target_os = "linux")]
 pub mod notify;
+pub mod remap;
 #[cfg(target_os = "linux")]
 pub mod uhid;

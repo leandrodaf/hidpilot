@@ -86,6 +86,26 @@ hidpilot-flow set --clipboard false            # keep the clipboard to yourself
 ```
 
 Security: nothing is ever typed or clicked over the network; Flow only tells the other computer where the pointer enters and switches the device's Easy-Switch channel. Pairing uses SPAKE2 on the code (three wrong tries close the window) and afterwards Noise IK with pinned keys, so only paired computers can talk. It uses TCP 47811 (and 47812 while pairing) and mDNS, on the local network only.
+## Button remapping and gestures
+
+`hidpilot remap run` is a user service that gives buttons, the gesture button, the thumb
+wheel and keyboard special keys new actions, like Logi Options+. Without configuration the
+gesture button gets the Options+ gestures: click or swipe up for the activities overview,
+down for the desktop, left/right to change workspace.
+
+```sh
+hidpilot remap buttons master                  # buttons that take an action
+hidpilot remap actions                         # what they can do
+hidpilot remap set master back key:alt+left
+hidpilot remap set master forward tab-next --app firefox    # only while Firefox has focus
+hidpilot remap set mechanical emoji cmd:gnome-characters
+hidpilot remap thumbwheel master volume
+hidpilot remap run
+```
+
+Settings live in `~/.config/hidpilot/buttons.toml` and are reloaded while the service runs.
+Only buttons with an action in the profile of the focused app are diverted; the rest keep
+their normal behaviour, and stopping the service gives every button back.
 
 ## Supported HID++ features
 
@@ -104,6 +124,10 @@ Security: nothing is ever typed or clicked over the network; Flow only tells the
 | Multi-platform | 0x4531 | `platform` |
 
 The headset protocol is documented in [docs/zone-vibe-protocol.md](docs/zone-vibe-protocol.md).
+## Roadmap
+
+- Zone Vibe Wireless headset: battery, sidetone, equalizer, auto power off, voice prompts
+- Graphical interface
 
 ## Credits
 

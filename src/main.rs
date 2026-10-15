@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use hidpilot::features::BacklightMode;
 use hidpilot::hidpp::{Device, feature as f};
-use hidpilot::{centurion, daemon, features, hidpp};
+use hidpilot::{centurion, daemon, features, hidpp, remap};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser)]
 #[command(version, about = "Configure Logitech mice, keyboards and headsets on Linux")]
@@ -89,6 +91,48 @@ enum Cmd {
     Daemon,
     /// Warn on the desktop when a device battery runs low (run as your user)
     Notify,
+    /// Button, gesture and thumb wheel actions (like Logi Options+)
+    Remap {
+        #[command(subcommand)]
+        cmd: RemapCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemapCmd {
+    /// Run the remapping service (as your user; Ctrl+C gives every button back)
+    Run,
+    /// List the buttons of a device that can take an action
+    Buttons { device: String },
+    /// List the available actions
+    Actions,
+    /// Show the configuration
+    Show,
+    /// Give a button an action, e.g. `remap set master back key:alt+left`
+    Set {
+        device: String,
+        /// Button name or id (see `remap buttons`)
+        button: String,
+        /// Action (see `remap actions`); "default" gives the button back
+        action: String,
+        /// Only while this application has focus (its WM_CLASS, e.g. firefox)
+        #[arg(long)]
+        app: Option<String>,
+    },
+    /// Set what the thumb wheel does: scroll, volume, zoom, workspaces or tabs
+    Thumbwheel {
+        device: String,
+        preset: String,
+        #[arg(long)]
+        app: Option<String>,
+    },
+    /// Divert one button for a few seconds and print its events, then give it back
+    Test {
+        device: String,
+        button: String,
+        #[arg(long, default_value_t = 8)]
+        seconds: u64,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -307,8 +351,114 @@ fn main() -> Result<()> {
                     (true, false) => "divertable",
                     _ => "",
                 };
-                println!("{:#06x}  {:<24} task {:#06x}  {flags}", c.cid, name, c.task);
+                let raw = if c.raw_xy { " +raw xy" } else { "" };
+                println!("{:#06x}  {:<24} task {:#06x}  {flags}{raw}", c.cid, name, c.task);
             }
+        }
+        Cmd::Remap { cmd } => remap_cmd(cmd)?,
+    }
+    Ok(())
+}
+
+/// Finds a button by id ("0x00c3") or by name ("gesture", "back").
+fn find_button(d: &mut Device, query: &str) -> Result<u16> {
+    let buttons = remap::buttons(d)?;
+    let q = query.to_lowercase();
+    if let Some(b) = buttons.iter().find(|b| b.cid == q || b.cid == format!("0x{:0>4}", q.trim_start_matches("0x"))) {
+        return Ok(u16::from_str_radix(&b.cid[2..], 16)?);
+    }
+    let hits: Vec<_> = buttons.iter().filter(|b| b.name.to_lowercase().contains(&q)).collect();
+    match hits.as_slice() {
+        [b] => Ok(u16::from_str_radix(&b.cid[2..], 16)?),
+        [] => anyhow::bail!("no button matches \"{query}\"; see `hidpilot remap buttons`"),
+        _ => anyhow::bail!(
+            "\"{query}\" matches {}; be more specific",
+            hits.iter().map(|b| b.name.as_str()).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+fn profile_of<'a>(cfg: &'a mut remap::Config, d: &mut Device, app: Option<String>) -> Result<&'a mut remap::Profile> {
+    let unit = features::unit_id(d)?;
+    let dc = cfg.devices.entry(unit).or_default();
+    dc.name = d.name.clone();
+    Ok(match app {
+        Some(a) => dc.apps.entry(a.to_lowercase()).or_default(),
+        None => &mut dc.profile,
+    })
+}
+
+fn remap_cmd(cmd: RemapCmd) -> Result<()> {
+    match cmd {
+        RemapCmd::Run => {
+            let stop = Arc::new(AtomicBool::new(false));
+            let s = stop.clone();
+            ctrlc::set_handler(move || s.store(true, Ordering::Relaxed))?;
+            remap::run(stop)?;
+        }
+        RemapCmd::Buttons { device } => {
+            let mut d = open(&device)?;
+            for b in remap::buttons(&mut d)? {
+                println!("{}  {}{}", b.cid, b.name, if b.gestures { "  (gestures)" } else { "" });
+            }
+        }
+        RemapCmd::Actions => {
+            for (id, label) in remap::ACTIONS {
+                println!("{id:<20} {label}");
+            }
+            println!("\nthumb wheel presets:");
+            for (id, label) in remap::THUMB_PRESETS {
+                println!("{id:<20} {label}");
+            }
+        }
+        RemapCmd::Show => {
+            let p = remap::config_path()?;
+            match std::fs::read_to_string(&p) {
+                Ok(t) => print!("{t}"),
+                Err(_) => println!("no configuration yet ({}); mice get the Options+ gestures", p.display()),
+            }
+        }
+        RemapCmd::Set { device, button, action, app } => {
+            remap::Action::parse(&action)?;
+            let mut d = open(&device)?;
+            let cid = find_button(&mut d, &button)?;
+            let mut cfg = remap::Config::load()?;
+            let p = profile_of(&mut cfg, &mut d, app)?;
+            p.buttons.insert(remap::cid_key(cid), remap::Binding::Action(action.clone()));
+            cfg.save()?;
+            println!("{} {} -> {action}", d.name, remap::cid_key(cid));
+        }
+        RemapCmd::Thumbwheel { device, preset, app } => {
+            let mut d = open(&device)?;
+            let mut cfg = remap::Config::load()?;
+            let p = profile_of(&mut cfg, &mut d, app)?;
+            p.thumbwheel = Some(remap::Wheel::Preset(preset.clone()));
+            cfg.save()?;
+            println!("{} thumb wheel -> {preset}", d.name);
+        }
+        RemapCmd::Test { device, button, seconds } => {
+            let mut d = open(&device)?;
+            let cid = find_button(&mut d, &button)?;
+            let reprog = d.feature_index(f::REPROG_CONTROLS_V4)?.unwrap_or(0);
+            let before = features::cid_reporting(&mut d, cid)?;
+            features::set_cid_reporting(&mut d, cid, Some(true), None)?;
+            println!("{:#06x} diverted for {seconds} s, press it...", cid);
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+            while std::time::Instant::now() < end {
+                if let Some(r) = d.next_report(std::time::Duration::from_millis(200))? {
+                    if r.len() >= 8 && r[2] == reprog && r[3] & 0x0F == 0 {
+                        let held: Vec<String> = r[4..12]
+                            .chunks(2)
+                            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                            .filter(|c| *c != 0)
+                            .map(|c| format!("{c:#06x}"))
+                            .collect();
+                        println!("  event {}: held [{}]", r[3] >> 4, held.join(", "));
+                    }
+                }
+            }
+            features::set_cid_reporting(&mut d, cid, Some(before & features::report_flag::DIVERTED != 0), None)?;
+            println!("given back (reporting {:#04x})", features::cid_reporting(&mut d, cid)?);
         }
     }
     Ok(())

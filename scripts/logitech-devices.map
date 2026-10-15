@@ -1,0 +1,17 @@
+# <slug> <file>
+# The app loads lgasset://localhost/devices/<slug>.webp.
+# <file> starts with the folder it lives in under ~/.local/share/hidpilot/logitech:
+#   tune/         Logi Tune UI assets (asar assets/, hashed names, copied as-is)
+#   optionsplus/  Logi Options+ device depots, unpacked as optionsplus/<depot>/<file>
+# All files are WebP.
+
+# Zone Vibe Wireless, graphite (primaryColorCode 0). Off-white = cdd6c5422b29c81af28f, rose = 768c2b86541486d18978.
+zone-vibe-wireless tune/1dec034cbe8aa1aea561.webp
+
+# MX Master 3S, graphite (model 2b034). front = home card and Easy-Switch/Flow; side = Buttons and Point & scroll.
+mx-master-3s optionsplus/mx_master_3s/front_core.webp
+mx-master-3s-side optionsplus/mx_master_3s/side_core.webp
+mx-master-3s-back optionsplus/mx_master_3s/back_core.webp
+
+# MX Mechanical Mini (model 2b367). One top view for every tab (home, keys, Easy-Switch, backlight).
+mx-mechanical-mini optionsplus/mx_mechanical_mini/front.webp

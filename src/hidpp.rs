@@ -2,7 +2,7 @@
 
 use crate::hidraw::{self, BUS_BLUETOOTH, BUS_USB, Hidraw, HidrawInfo};
 use anyhow::{Result, anyhow, bail};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,8 @@ const SHORT: u8 = 0x10;
 const LONG: u8 = 0x11;
 const LONG_LEN: usize = 20;
 const SOFTWARE_ID: u8 = 0x0A;
+/// Reports that arrived while waiting for a reply and are kept for `next_report`.
+const PENDING_MAX: usize = 64;
 const TIMEOUT: Duration = Duration::from_secs(2);
 // Sleeping devices take over a second to wake; empty slots fail immediately.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
@@ -77,6 +79,10 @@ pub struct Device {
     pub name: String,
     pub via: Link,
     features: HashMap<u16, u8>,
+    /// Identifies our requests in replies; several programs can talk to one device at
+    /// once (the GUI and the remap service), each needs its own.
+    software_id: u8,
+    pending: VecDeque<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,7 +93,35 @@ pub enum Link {
 
 impl Device {
     fn new(path: &PathBuf, index: u8, via: Link) -> Result<Self> {
-        Ok(Self { io: Hidraw::open(path)?, index, name: String::new(), via, features: HashMap::new() })
+        Ok(Self {
+            io: Hidraw::open(path)?,
+            index,
+            name: String::new(),
+            via,
+            features: HashMap::new(),
+            software_id: SOFTWARE_ID,
+            pending: VecDeque::new(),
+        })
+    }
+
+    /// Uses another software id (1-15) so replies are not mixed with another program's.
+    pub fn set_software_id(&mut self, id: u8) {
+        self.software_id = id.clamp(1, 15);
+    }
+
+    /// Next report addressed to this device: notifications (events, connection changes)
+    /// and anything that was not a reply to our own requests. None on timeout.
+    pub fn next_report(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>> {
+        if let Some(r) = self.pending.pop_front() {
+            return Ok(Some(r));
+        }
+        let deadline = Instant::now() + timeout;
+        while let Some(r) = self.io.read_until(deadline)? {
+            if r.len() >= 4 && (r[0] == SHORT || r[0] == LONG) && r[1] == self.index {
+                return Ok(Some(r));
+            }
+        }
+        Ok(None)
     }
 
     pub fn path(&self) -> &PathBuf {
@@ -100,7 +134,7 @@ impl Device {
         msg[0] = LONG;
         msg[1] = self.index;
         msg[2] = index;
-        msg[3] = (function << 4) | SOFTWARE_ID;
+        msg[3] = (function << 4) | self.software_id;
         let n = params.len().min(LONG_LEN - 4);
         msg[4..4 + n].copy_from_slice(&params[..n]);
         self.io.write(&msg)?;
@@ -120,6 +154,12 @@ impl Device {
             }
             if r[2] == index && r[3] == msg[3] {
                 return Ok(r[4..].to_vec());
+            }
+            // Events carry software id 0, receiver notifications (connection changes) are
+            // HID++ 1.0 sub ids 0x40-0x4F; keep both for whoever reads notifications.
+            let event = r[3] & 0x0F == 0 || (r[0] == SHORT && (0x40..=0x4F).contains(&r[2]));
+            if event && self.pending.len() < PENDING_MAX {
+                self.pending.push_back(r);
             }
         }
         Err(HidppError::Timeout.into())
