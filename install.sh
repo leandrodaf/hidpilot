@@ -1,111 +1,212 @@
 #!/usr/bin/env bash
-# Builds hidpilot and installs it for the current user, plus the system parts (udev rules,
-# battery service) after asking. Safe to run again: every step overwrites or skips.
+# Installs hidpilot: the CLI, the desktop app, the background services and the system
+# parts (device access rules, battery service). One confirmation, one sudo prompt.
+# Safe to run again; it updates whatever is already there.
 #
-#   ./install.sh        ask before each system change
-#   ./install.sh -y     answer yes to everything
+#   ./install.sh                 install everything
+#   ./install.sh -y              same, without the confirmation
+#   ./install.sh --no-flow       skip Flow (moving mouse and keyboard between computers)
+#   ./install.sh --no-remap      skip custom button and key actions
+#   ./install.sh --no-firewall   do not open Flow's ports in ufw
+#   ./install.sh --no-assets     do not download Logitech's pictures and fonts (~900 MB)
+#
+# Everything lives in main(), so editing this file while it runs cannot break the run.
 set -euo pipefail
 
-cd "$(dirname "$0")"
-
-YES=0
-[[ "${1:-}" == "-y" || "${1:-}" == "--yes" ]] && YES=1
+YES=0 FLOW=1 REMAP=1 FIREWALL=1 ASSETS=1
 
 BIN="$HOME/.local/bin"
 UNITS="$HOME/.config/systemd/user"
 APPS="$HOME/.local/share/applications"
 HICOLOR="$HOME/.local/share/icons/hicolor"
-ICONS="$HICOLOR/scalable/apps"
+ASSET_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hidpilot/logitech"
 
-say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+step() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+bad() { printf '  \033[31m✗\033[0m %s\n' "$*"; }
+note() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-ask() {
-    if [[ $YES == 1 ]]; then return 0; fi
-    local reply
-    read -r -p "$1 [y/N] " reply
-    [[ "$reply" =~ ^[YySs]$ ]]
+parse_args() {
+    for a in "$@"; do
+        case "$a" in
+            -y|--yes) YES=1 ;;
+            --no-flow) FLOW=0 ;;
+            --no-remap) REMAP=0 ;;
+            --no-firewall) FIREWALL=0 ;;
+            --no-assets) ASSETS=0 ;;
+            -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+            *) die "unknown option $a (see --help)" ;;
+        esac
+    done
 }
 
-command -v cargo >/dev/null || { echo "cargo not found: install Rust from https://rustup.rs" >&2; exit 1; }
+check_requirements() {
+    command -v cargo >/dev/null || die "Rust is not installed. Install it with: curl https://sh.rustup.rs -sSf | sh"
+    local missing=()
+    pkg-config --exists webkit2gtk-4.1 2>/dev/null || missing+=(libwebkit2gtk-4.1-dev)
+    pkg-config --exists gtk+-3.0 2>/dev/null || missing+=(libgtk-3-dev)
+    # the tray icon loads this library at run time
+    ldconfig -p 2>/dev/null | grep -q libayatana-appindicator3 || missing+=(libayatana-appindicator3-1)
+    command -v 7z >/dev/null || missing+=(p7zip-full)
+    if ((${#missing[@]})); then
+        die "missing system packages. Install them with:
+    sudo apt install ${missing[*]}"
+    fi
+}
 
-say "Building (release)"
-cargo build --release -p hidpilot -p hidpilot-flow
-GUI=1
-if ! cargo build --release -p hidpilot-gui; then
-    GUI=0
-    warn "the desktop app did not build (sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev); continuing without it"
-fi
+subnet() {
+    local iface
+    iface=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+    [[ -n "$iface" ]] && ip -o -4 route show dev "$iface" proto kernel scope link 2>/dev/null | awk '{print $1; exit}'
+}
 
-say "Installing programs in $BIN"
-install -Dm755 target/release/hidpilot "$BIN/hidpilot"
-install -Dm755 target/release/hidpilot-flow "$BIN/hidpilot-flow"
-if [[ $GUI == 1 ]]; then
+plan() {
+    bold "hidpilot will install:"
+    echo "  • hidpilot, hidpilot-flow and the hidpilot app in $BIN (and in the app grid)"
+    echo "  • battery service: GNOME shows your mouse, keyboard and headset batteries   (sudo)"
+    echo "  • device access rules, so no sudo is needed afterwards                     (sudo)"
+    echo "  • low battery notifications"
+    ((REMAP)) && echo "  • custom button and key actions (gestures, per-app profiles)"
+    ((FLOW)) && echo "  • Flow: move mouse and keyboard between computers"
+    if ((FLOW && FIREWALL)) && command -v ufw >/dev/null && [[ -n "$(subnet)" ]]; then
+        echo "  • firewall: open Flow only to your local network $(subnet)                 (sudo)"
+    fi
+    if ((ASSETS)) && [[ ! -f "$ASSET_DIR/devices/mx-master-3s.webp" ]]; then
+        echo "  • Logitech's device pictures and fonts, from Logitech's installers (~900 MB download)"
+    fi
+    echo
+    if ((!YES)); then
+        local reply
+        read -r -p "Continue? [Y/n] " reply
+        [[ -z "$reply" || "$reply" =~ ^[YySs]$ ]] || exit 0
+    fi
+}
+
+build() {
+    step "Building (the first time takes a few minutes)"
+    cargo build --release --workspace --quiet
+    ok "built"
+}
+
+install_user_parts() {
+    step "Installing programs"
+    install -Dm755 target/release/hidpilot "$BIN/hidpilot"
+    install -Dm755 target/release/hidpilot-flow "$BIN/hidpilot-flow"
     install -Dm755 target/release/hidpilot-gui "$BIN/hidpilot-gui"
     install -Dm644 packaging/hidpilot.desktop "$APPS/hidpilot.desktop"
-    install -Dm644 packaging/hidpilot.svg "$ICONS/hidpilot.svg"
-    # PNG copies for docks and menus that skip SVG, then refresh the icon cache:
-    # a stale ~/.local/share/icons/hicolor/icon-theme.cache hides new icons.
+    install -Dm644 packaging/hidpilot.svg "$HICOLOR/scalable/apps/hidpilot.svg"
     for size in 48 64 128 256; do
         install -Dm644 "packaging/icons/hidpilot-$size.png" "$HICOLOR/${size}x${size}/apps/hidpilot.png"
     done
-    if command -v gtk-update-icon-cache >/dev/null; then
-        gtk-update-icon-cache -q -f -t "$HICOLOR" || true
-    fi
-    if command -v update-desktop-database >/dev/null; then
-        update-desktop-database -q "$APPS" || true
-    fi
-fi
-case ":$PATH:" in
-    *":$BIN:"*) ;;
-    *) warn "$BIN is not in your PATH; add it to your shell profile" ;;
-esac
+    # A stale user icon cache hides new icons.
+    command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -f -t "$HICOLOR" || true
+    command -v update-desktop-database >/dev/null && update-desktop-database -q "$APPS" || true
+    ok "programs in $BIN"
+    case ":$PATH:" in
+        *":$BIN:"*) ;;
+        *) note "$BIN is not in your PATH; open a new terminal or add it to ~/.profile" ;;
+    esac
 
-say "Installing user services"
-install -Dm644 systemd/user/hidpilot-notify.service "$UNITS/hidpilot-notify.service"
-install -Dm644 systemd/user/hidpilot-flow.service "$UNITS/hidpilot-flow.service"
-install -Dm644 systemd/user/hidpilot-remap.service "$UNITS/hidpilot-remap.service"
-systemctl --user daemon-reload
-systemctl --user enable --now hidpilot-notify.service
-if ask "Start Flow (move mouse and keyboard between computers) at login?"; then
-    systemctl --user enable --now hidpilot-flow.service
-fi
-# Button remapping ships separately; only enable it once the binary knows the command.
-if "$BIN/hidpilot" remap --help >/dev/null 2>&1; then
-    if ask "Start custom button actions at login?"; then
-        systemctl --user enable --now hidpilot-remap.service
-    fi
-fi
+    step "Starting background services"
+    for unit in hidpilot-notify hidpilot-flow hidpilot-remap; do
+        install -Dm644 "systemd/user/$unit.service" "$UNITS/$unit.service"
+    done
+    systemctl --user daemon-reload
+    enable_user hidpilot-notify
+    if ((REMAP)); then enable_user hidpilot-remap; else systemctl --user disable --now hidpilot-remap.service 2>/dev/null || true; fi
+    if ((FLOW)); then enable_user hidpilot-flow; else systemctl --user disable --now hidpilot-flow.service 2>/dev/null || true; fi
+}
 
-if ask "Install the system parts (device access rules and the battery service)? Needs sudo."; then
-    say "Installing udev rules and the battery service"
+enable_user() {
+    systemctl --user enable "$1.service" --quiet 2>/dev/null || true
+    # restart picks up a rebuilt binary when the script runs again
+    systemctl --user restart "$1.service"
+}
+
+# Ask for the password once, up front, and keep sudo alive until the script ends, so a
+# long build never leaves the user typing it again halfway.
+sudo_once() {
+    step "Asking for your password once (for the battery service and device rules)"
+    sudo -v || die "sudo is needed for the battery service and device rules"
+    while kill -0 "$$" 2>/dev/null; do
+        sudo -n true 2>/dev/null
+        sleep 50
+    done &
+}
+
+install_system_parts() {
+    step "Installing system parts"
     sudo install -Dm755 target/release/hidpilot /usr/local/bin/hidpilot
     sudo install -Dm644 udev/70-hidpilot.rules /etc/udev/rules.d/70-hidpilot.rules
     sudo install -Dm644 systemd/system/hidpilot-battery.service /etc/systemd/system/hidpilot-battery.service
     sudo udevadm control --reload
     sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=misc --subsystem-match=input
     sudo systemctl daemon-reload
-    sudo systemctl enable --now hidpilot-battery.service
-    # Restart picks up a rebuilt binary when this script runs again.
+    sudo systemctl enable --quiet hidpilot-battery.service
     sudo systemctl restart hidpilot-battery.service
-fi
+    ok "device rules and battery service"
 
-# Flow listens on two TCP ports and finds peers with mDNS. Open them for the local
-# network only, and only if a firewall is in the way.
-if command -v ufw >/dev/null; then
-    iface=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-    subnet=""
-    if [[ -n "$iface" ]]; then
-        subnet=$(ip -o -4 route show dev "$iface" proto kernel scope link 2>/dev/null | awk '{print $1; exit}')
+    local net
+    net=$(subnet || true)
+    if ((FLOW && FIREWALL)) && command -v ufw >/dev/null && [[ -n "$net" ]]; then
+        sudo ufw allow from "$net" to any port 47811:47812 proto tcp comment 'hidpilot flow' >/dev/null
+        sudo ufw allow from "$net" to any port 5353 proto udp comment 'mDNS (hidpilot flow)' >/dev/null
+        ok "firewall open for Flow on $net"
     fi
-    if [[ -n "$subnet" ]] && ask "Allow Flow through the firewall from your local network ($subnet) only? Needs sudo."; then
-        sudo ufw allow from "$subnet" to any port 47811:47812 proto tcp comment 'hidpilot flow'
-        sudo ufw allow from "$subnet" to any port 5353 proto udp comment 'mDNS (hidpilot flow)'
-    fi
-fi
+}
 
-say "Done"
-echo "  hidpilot list              connected devices"
-echo "  hidpilot-flow pair         pair this computer with another one"
-[[ $GUI == 1 ]] && echo "  hidpilot-gui               settings app (also in the app grid)"
-true
+fetch_assets() {
+    if ((ASSETS)) && [[ ! -f "$ASSET_DIR/devices/mx-master-3s.webp" ]]; then
+        step "Downloading Logitech's pictures and fonts"
+        if ./scripts/fetch-logitech-assets.sh; then
+            ok "pictures and fonts in $ASSET_DIR"
+        else
+            note "could not fetch them now; the app works without them. Retry with ./scripts/fetch-logitech-assets.sh"
+        fi
+    fi
+}
+
+verify() {
+    step "Checking"
+    systemctl is-active --quiet hidpilot-battery && ok "battery service running" || bad "battery service is not running (journalctl -u hidpilot-battery)"
+    local units=(hidpilot-notify)
+    ((REMAP)) && units+=(hidpilot-remap)
+    ((FLOW)) && units+=(hidpilot-flow)
+    for u in "${units[@]}"; do
+        systemctl --user is-active --quiet "$u" && ok "$u running" || bad "$u is not running (journalctl --user -u $u)"
+    done
+    # Give the battery service a moment to publish, then ask UPower what GNOME sees.
+    local n=0
+    for _ in 1 2 3 4 5 6 7 8; do
+        n=$(upower -e 2>/dev/null | grep -c hidpilot || true)
+        ((n > 0)) && break
+        sleep 1
+    done
+    if ((n > 0)); then
+        upower -e | grep hidpilot | while read -r dev; do
+            ok "GNOME sees: $(upower -i "$dev" | awk -F': *' '/model:/{m=$2} /percentage:/{p=$2} END{print m" "p}')"
+        done
+    else
+        note "no device batteries yet: switch the devices on, or check: journalctl -u hidpilot-battery"
+    fi
+    [[ -f "$ASSET_DIR/devices/mx-master-3s.webp" ]] && ok "Logitech pictures installed" || note "no Logitech pictures: the app shows simple drawings (./scripts/fetch-logitech-assets.sh)"
+}
+
+main() {
+    cd "$(dirname "$0")"
+    parse_args "$@"
+    check_requirements
+    plan
+    sudo_once
+    build
+    install_user_parts
+    install_system_parts
+    fetch_assets
+    verify
+    echo
+    bold "Done. Open \"hidpilot\" from the app grid; it also starts with the computer, in the tray."
+}
+
+main "$@"

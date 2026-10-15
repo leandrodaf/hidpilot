@@ -100,7 +100,8 @@ struct Mirrors(HashMap<String, Mirror>);
 
 impl Mirrors {
     fn publish(&mut self, key: &str, name: &str, uniq: &str, kind: Kind, percent: u8, charging: bool) {
-        if !self.0.contains_key(key) {
+        let fresh = !self.0.contains_key(key);
+        if fresh {
             match BatteryDevice::create(name, uniq, kind) {
                 Ok(dev) => {
                     eprintln!("hidpilot: publishing battery of {name}");
@@ -122,6 +123,10 @@ impl Mirrors {
         if let Err(e) = m.dev.update(percent, charging) {
             eprintln!("hidpilot: {name}: {e:#}");
             self.0.remove(key);
+            return;
+        }
+        if fresh {
+            announce(uniq);
         }
     }
 
@@ -129,6 +134,22 @@ impl Mirrors {
         if self.0.remove(key).is_some() {
             eprintln!("hidpilot: {key} went away");
         }
+    }
+}
+
+/// UPower sees a new power_supply before its first level arrives, files it as "not a
+/// battery" and, for the same path, never looks again (UPower 1.90 handles a later
+/// "add" or "change" without re-creating it). Once the level is in, replay
+/// remove + add so it evaluates the battery from scratch.
+fn announce(uniq: &str) {
+    thread::sleep(Duration::from_millis(200));
+    let uevent = format!("/sys/class/power_supply/hid-{uniq}-battery/uevent");
+    for action in ["remove", "add"] {
+        if let Err(e) = std::fs::write(&uevent, action) {
+            eprintln!("hidpilot: could not announce {uevent}: {e}");
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
     }
 }
 

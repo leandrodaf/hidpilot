@@ -8,27 +8,64 @@ Tested on: MX Master 3S, MX Mechanical Mini (Logi Bolt receiver), Zone Vibe Wire
 
 ## Install
 
+You need Ubuntu 24.04 or similar (GNOME, X11 or Wayland for the app; Flow needs X11), and
+three minutes.
+
+**1. Install the build tools** (once):
+
 ```sh
+sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
+                 libayatana-appindicator3-1 p7zip-full git curl
+curl https://sh.rustup.rs -sSf | sh        # Rust, if you do not have it
+```
+
+**2. Get hidpilot and install it:**
+
+```sh
+git clone https://github.com/leandrodaf/hidpilot.git
+cd hidpilot
 ./install.sh
 ```
 
-It builds everything in release mode and installs, for your user:
+The installer shows what it will do, asks once to continue and once for your password, and
+then does everything: builds, installs the programs and the app, starts the services, sets up
+the device rules, opens Flow in the firewall for your local network, downloads Logitech's
+device pictures and fonts from Logitech's own installers, and finally checks that each part
+is running and that GNOME sees your batteries.
+
+**3. Open "hidpilot"** from the app grid. From then on it starts with the computer and lives
+in the tray (closing or minimizing the window keeps it there).
+
+Options: `./install.sh --help` (`-y` skips the question; `--no-flow`, `--no-remap`,
+`--no-firewall`, `--no-assets` leave parts out). To update, `git pull && ./install.sh`.
+To remove everything, `./uninstall.sh` (it asks before deleting your settings).
+
+### Instalação (pt-BR)
+
+```sh
+sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-1 p7zip-full git curl
+curl https://sh.rustup.rs -sSf | sh              # Rust, se ainda não tiver
+git clone https://github.com/leandrodaf/hidpilot.git && cd hidpilot
+./install.sh                                     # pergunta uma vez e pede a senha uma vez
+```
+
+Depois abra **hidpilot** na grade de aplicativos. Ele inicia junto com o computador e fica na
+bandeja; para atualizar, `git pull && ./install.sh`; para remover, `./uninstall.sh`.
+
+### What gets installed
 
 | What | Where |
 |---|---|
-| `hidpilot`, `hidpilot-flow`, `hidpilot-gui` | `~/.local/bin` |
+| `hidpilot` (CLI), `hidpilot-flow`, `hidpilot-gui` (the app) | `~/.local/bin` |
+| App launcher, icon, start at login | `~/.local/share/applications`, `~/.local/share/icons`, `~/.config/autostart` |
 | Low battery notifications, Flow, button actions (user services) | `~/.config/systemd/user` |
-| App launcher and icon | `~/.local/share/applications`, `~/.local/share/icons` |
+| Device access rules | `/etc/udev/rules.d/70-hidpilot.rules` |
+| Battery service, root, sandboxed: no network, read-only system, no capabilities | `/etc/systemd/system/hidpilot-battery.service` |
+| Logitech's pictures and fonts, taken from Logitech's installers on your machine (never shipped with hidpilot) | `~/.local/share/hidpilot/logitech` |
 
-Then it asks before each system change (all need `sudo`):
-
-- **udev rules** (`/etc/udev/rules.d/70-hidpilot.rules`): give the logged-in user access to Logitech hidraw nodes and to `/dev/uinput`, so nothing else needs `sudo`; and tag the mirrored headset so GNOME shows it with a headset icon.
-- **Battery service** (`hidpilot-battery.service`, runs as root because only root may open `/dev/uhid`): publishes mouse, keyboard and headset batteries to the kernel, so they show up in GNOME's power menu and Settings like any Bluetooth device. It is sandboxed (no network, read-only system, no capabilities, only `/dev/uhid` and hidraw). It refreshes every 5 minutes and right after the devices report a change.
-- **Firewall** (only if `ufw` is installed): opens the Flow ports to your local subnet only.
-
-Run it again after pulling changes; every step is idempotent. `./install.sh -y` answers yes to everything. `./uninstall.sh` removes it all and asks before deleting your settings and Flow pairings.
-
-Building the desktop app needs `libwebkit2gtk-4.1-dev` and `libgtk-3-dev`; without them the rest still installs.
+The kernel has no driver for the Logi Bolt receiver, so without hidpilot GNOME does not know
+the devices behind it. The battery service is what makes them appear in GNOME's power
+settings, with their names and levels.
 
 ### Services
 
@@ -39,6 +76,8 @@ systemctl --user status hidpilot-flow        # Flow
 systemctl --user status hidpilot-remap       # custom button actions
 journalctl --user -u hidpilot-flow -f        # follow a service's log
 ```
+
+The app writes what it does with its window and tray to `~/.local/state/hidpilot/gui.log`.
 
 ## Usage
 
@@ -64,7 +103,8 @@ Devices are picked by list number or by any part of their name.
 
 ```sh
 hidpilot headset                               # battery, equalizer, sidetone, mic...
-hidpilot headset --eq 4,2,0,-2,3               # five bands in dB, or --eq flat
+hidpilot headset --eq podcast                  # a preset (default, volume-boost, podcast, bass-boost)
+hidpilot headset --eq 40,20,0,-20,30           # or five bands, -128..127 (0 = flat)
 hidpilot headset --sidetone 5                  # hear your own voice, 0-10
 hidpilot headset --mute on
 hidpilot headset --voice-prompts off
@@ -84,6 +124,7 @@ hidpilot-flow place "other-pc" right           # where its screen is
 hidpilot-flow peers                            # paired computers
 hidpilot-flow set --clipboard false            # keep the clipboard to yourself
 ```
+
 
 Security: nothing is ever typed or clicked over the network; Flow only tells the other computer where the pointer enters and switches the device's Easy-Switch channel. Pairing uses SPAKE2 on the code (three wrong tries close the window) and afterwards Noise IK with pinned keys, so only paired computers can talk. It uses TCP 47811 (and 47812 while pairing) and mDNS, on the local network only.
 ## Button remapping and gestures
@@ -124,10 +165,12 @@ their normal behaviour, and stopping the service gives every button back.
 | Multi-platform | 0x4531 | `platform` |
 
 The headset protocol is documented in [docs/zone-vibe-protocol.md](docs/zone-vibe-protocol.md).
+
 ## Roadmap
 
-- Zone Vibe Wireless headset: battery, sidetone, equalizer, auto power off, voice prompts
-- Graphical interface
+- Audio that follows the pointer between computers (headset multipoint or audio over the network)
+- Flow with computers running Logi Options+ ([docs/flow-interop.md](docs/flow-interop.md))
+- Device-specific icons in GNOME (UPower files every `/dev/uhid` battery as a generic battery)
 
 ## Credits
 

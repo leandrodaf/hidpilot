@@ -21,6 +21,8 @@ ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectKernelTunables=yes
+# ...except the uevent files of its own mirrors, to announce a new battery to UPower.
+ReadWritePaths=/sys/devices/virtual/misc/uhid
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes

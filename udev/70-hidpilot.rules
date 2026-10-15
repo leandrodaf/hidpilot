@@ -5,7 +5,9 @@ KERNEL=="hidraw*", KERNELS=="*:046D:*", TAG+="uaccess"
 # Button remapping creates a virtual input device through uinput.
 KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
 
-# The battery daemon mirrors the Zone headset as a virtual HID device. UPower picks a
-# battery's type from its input siblings, and sound properties win over input ones, so
-# tagging the node as a headset makes GNOME show a headset icon.
-SUBSYSTEM=="input", ATTRS{uniq}=="hidpilot-headset-*", ENV{SOUND_INITIALIZED}="1", ENV{SOUND_FORM_FACTOR}="headset"
+# The battery daemon mirrors each device as a virtual HID device (/dev/uhid) only to
+# publish its battery. Those mirrors never send input, so keep them away from libinput,
+# and drop their input type: UPower groups every /dev/uhid device as one physical device
+# and would give all of them the same type (all "headset" or all "keyboard"). Without
+# it each battery keeps its own name and level.
+SUBSYSTEM=="input", ATTRS{uniq}=="hidpilot-*", ENV{LIBINPUT_IGNORE_DEVICE}="1", ENV{ID_INPUT}="", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_KEY}="", ENV{ID_INPUT_KEYBOARD}=""
