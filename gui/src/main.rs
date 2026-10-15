@@ -1,5 +1,7 @@
 //! Desktop app: a webview UI over the same device code the CLI uses.
 
+mod tray;
+
 use anyhow::{Context, Result, anyhow};
 use hidpilot::centurion::{self, Headset};
 use hidpilot::features::{self as feat, BacklightMode};
@@ -60,7 +62,7 @@ fn err(e: anyhow::Error) -> String {
 }
 
 #[tauri::command(async)]
-fn devices(state: tauri::State<State>, rescan: bool) -> Result<Value, String> {
+fn devices(app: tauri::AppHandle, state: tauri::State<State>, rescan: bool) -> Result<Value, String> {
     let mut d = state.0.lock().unwrap();
     if rescan { d.rescan() } else { d.ensure() }.map_err(err)?;
     let mut out = Vec::new();
@@ -83,6 +85,12 @@ fn devices(state: tauri::State<State>, rescan: bool) -> Result<Value, String> {
             "battery": headset_battery_json(h),
         }));
     }
+    // "MX Master 3S 95% · Zone Vibe Wireless 87%" in the tray menu and tooltip.
+    let summary: Vec<String> = out
+        .iter()
+        .filter_map(|d| Some(format!("{} {}%", d["name"].as_str()?, d["battery"]["percent"].as_u64()?)))
+        .collect();
+    tray::set_status(&app, &if summary.is_empty() { "Nenhum dispositivo".to_string() } else { summary.join(" · ") });
     Ok(Value::Array(out))
 }
 
@@ -343,6 +351,11 @@ fn serve_asset(path: &str) -> tauri::http::Response<Vec<u8>> {
 fn main() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("lgasset", |_ctx, req| serve_asset(req.uri().path()))
+        .setup(|app| {
+            tray::install(app.handle())?;
+            Ok(())
+        })
+        .on_window_event(tray::hide_on_close)
         .manage(State(Mutex::new(Devices::default())))
         .invoke_handler(tauri::generate_handler![devices, device, set])
         .run(tauri::generate_context!())

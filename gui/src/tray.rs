@@ -1,13 +1,6 @@
 //! Tray icon (top bar, through the AppIndicator extension Ubuntu enables by default).
 //!
-//! Not wired in yet. To enable it:
-//!   1. gui/Cargo.toml: `tauri = { version = "2", features = ["tray-icon"] }`
-//!   2. gui/src/main.rs: `mod tray;` and, in the builder,
-//!      `.setup(|app| { tray::install(app.handle())?; Ok(()) })`
-//!   3. To keep running in the tray when the window closes, add
-//!      `.on_window_event(tray::hide_on_close)`.
-//!   4. Call `tray::set_status(&app, "MX Master 3S 80% · Zone Vibe 60%")` whenever
-//!      batteries are refreshed.
+//! Closing or minimizing the window sends the app to the tray; the menu brings it back.
 //!
 //! On Linux an AppIndicator only shows a menu: left clicks never reach the app, so every
 //! action lives in the menu. Needs libayatana-appindicator3-1 at runtime.
@@ -72,10 +65,18 @@ pub fn set_status<R: Runtime>(app: &AppHandle<R>, text: &str) {
     }
 }
 
-/// Closing the window hides it instead, so the tray (and Flow status) keeps running.
+/// Closing or minimizing the window hides it to the tray instead.
 pub fn hide_on_close<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        let _ = window.hide();
-        api.prevent_close();
+    match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            let _ = window.hide();
+            api.prevent_close();
+        }
+        // Minimizing shows up as a resize; hide so only the tray icon remains.
+        WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
+            let _ = window.unminimize();
+            let _ = window.hide();
+        }
+        _ => {}
     }
 }

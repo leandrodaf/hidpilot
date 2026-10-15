@@ -83,7 +83,7 @@ function toast(msg) {
 
 // ---------- screens ----------
 function topbar() {
-  return `<div class="topbar"><button class="dots" data-act="menu" title="Menu">•••</button></div>`;
+  return "";
 }
 
 function home() {
@@ -418,8 +418,6 @@ app.addEventListener("click", async (ev) => {
       return;
     case "sheet-ok":
       return sheetOk();
-    case "menu":
-      return toast("hidpilot — configurações Logitech para Linux");
   }
 });
 
