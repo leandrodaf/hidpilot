@@ -1,0 +1,2 @@
+KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*:046D:*", TAG+="uaccess"
