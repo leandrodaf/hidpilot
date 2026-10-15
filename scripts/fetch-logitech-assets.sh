@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# Copies the fonts and device pictures of Logi Tune into ~/.local/share/hidpilot/logitech,
-# where hidpilot-gui looks for them. They come from Logitech's own installer, downloaded
-# from Logitech, and stay on this machine: hidpilot never ships them.
+# Copies the fonts and device pictures of Logi Tune and Logi Options+ into
+# ~/.local/share/hidpilot/logitech, where hidpilot-gui looks for them. They come from
+# Logitech's own installers, downloaded from Logitech, and stay on this machine:
+# hidpilot never ships them.
 #
-# Needs: curl, 7z (p7zip-full), node/npx (for the Electron archive).
+# Usage: fetch-logitech-assets.sh [--skip-optionsplus]   (Options+ is a ~720 MB download)
+# Needs: curl, 7z (p7zip-full), node/npx (for the Electron archive), python3.
 set -euo pipefail
 
 url="https://software.vc.logitech.com/downloads/tune/LogiTuneSetup.msi"
+oplus_url="https://download01.logi.com/web/ftp/pub/techsupport/optionsplus/logioptionsplus_installer_offline.exe"
+# Device depots inside the Options+ installer whose pictures the app uses.
+oplus_depots=(mx_master_3s mx_mechanical_mini)
+skip_oplus=0
+[ "${1:-}" = "--skip-optionsplus" ] && skip_oplus=1
 dest="${XDG_DATA_HOME:-$HOME/.local/share}/hidpilot/logitech"
 
 for tool in curl 7z npx python3; do
@@ -45,10 +52,48 @@ for fam, src in re.findall(r"@font-face\{font-family:(BrownPan-[A-Za-z]+);[^}]*?
 PY
 # Everything else stays under tune/ with its original name, for the device pictures map.
 cp -r "$work/ui/assets/." "$dest/tune/"
-if [ -f "$(dirname "$0")/logitech-devices.map" ]; then
+rm -rf "$work/msi" "$work/files" "$work/tune.msi"
+
+if [ "$skip_oplus" = 0 ]; then
+  echo "Downloading Logi Options+ from Logitech (large)..."
+  curl -fSL --progress-bar -o "$work/oplus.exe" "$oplus_url"
+  mkdir -p "$work/oplus"
+  7z x -y -o"$work/oplus" "$work/oplus.exe" "${oplus_depots[@]/%/.depot}" -r >/dev/null
+  rm -f "$work/oplus.exe"
+  for depot in "${oplus_depots[@]}"; do
+    file="$(find "$work/oplus" -name "$depot.depot" | head -1)"
+    [ -n "$file" ] || { echo "warning: $depot.depot not found in the installer" >&2; continue; }
+    # .depot: magic(4) | u32 header length | JSON {"files": [...]} | (u32 size | bytes) per file
+    python3 -I - "$file" "$dest/optionsplus/$depot" <<'PY'
+import json, os, struct, sys
+src, dst = sys.argv[1], os.path.abspath(sys.argv[2])
+d = open(src, "rb").read()
+n = struct.unpack("<I", d[4:8])[0]
+off = 8 + n
+for f in json.loads(d[8:off])["files"]:
+    # Every entry, directories included, is preceded by its size.
+    size = struct.unpack("<I", d[off:off + 4])[0]
+    off += 4
+    name = f["name"].replace("\\", "/")
+    out = os.path.normpath(os.path.join(dst, name))
+    if not out.startswith(dst + os.sep):
+        raise SystemExit(f"unsafe path in depot: {name}")
+    if f.get("type") == "dir" or name.endswith("/"):
+        os.makedirs(out, exist_ok=True)
+        continue
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    open(out, "wb").write(d[off:off + size])
+    off += size
+PY
+    echo "pictures: $depot"
+  done
+fi
+
+map="$(dirname "$0")/logitech-devices.map"
+if [ -f "$map" ]; then
   while read -r slug file; do
     [ -z "$slug" ] || [ "${slug:0:1}" = "#" ] && continue
-    [ -f "$dest/tune/$file" ] && cp "$dest/tune/$file" "$dest/devices/$slug.webp"
-  done < "$(dirname "$0")/logitech-devices.map"
+    [ -f "$dest/$file" ] && cp "$dest/$file" "$dest/devices/$slug.webp"
+  done < "$map"
 fi
 echo "Done: $dest"
