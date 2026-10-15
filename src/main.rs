@@ -1,7 +1,8 @@
+mod centurion;
 mod daemon;
 mod features;
 mod hidpp;
-#[allow(dead_code)] // feature-report helpers are for the upcoming headset backend
+#[allow(dead_code)] // feature-report helpers are unused so far
 mod hidraw;
 mod uhid;
 
@@ -68,6 +69,12 @@ enum Cmd {
     Host { device: String, number: Option<u8> },
     /// List the device's reprogrammable buttons
     Buttons { device: String },
+    /// Show or configure the Zone headset
+    Headset {
+        /// Minutes of inactivity before it switches off
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
+        auto_sleep: Option<u8>,
+    },
     /// Run the background service (publishes batteries to GNOME; needs root)
     Daemon,
 }
@@ -111,7 +118,8 @@ fn main() -> Result<()> {
     match cli.cmd {
         Cmd::List => {
             let devices = hidpp::discover()?;
-            if devices.is_empty() {
+            let headset = centurion::find()?;
+            if devices.is_empty() && headset.is_none() {
                 println!("No Logitech HID++ devices online.");
             }
             for (i, d) in devices.iter().enumerate() {
@@ -120,6 +128,9 @@ fn main() -> Result<()> {
                     hidpp::Link::Bluetooth => "bluetooth".into(),
                 };
                 println!("{}. {}  ({via}, {})", i + 1, d.name, d.path().display());
+            }
+            if let Some(h) = headset {
+                println!("-. {}  (Zone receiver; use `hidpilot headset`)", h.name);
             }
         }
         Cmd::Info { device } => info(&mut open(&device)?)?,
@@ -134,6 +145,24 @@ fn main() -> Result<()> {
                     Err(e) => println!("{}: {e}", d.name),
                 }
             }
+            if let Some(mut h) = centurion::find()? {
+                match h.battery() {
+                    Ok(b) => println!("{}: {}", h.name, headset_battery_text(&b)),
+                    Err(e) => println!("{}: {e}", h.name),
+                }
+            }
+        }
+        Cmd::Headset { auto_sleep } => {
+            let Some(mut h) = centurion::find()? else {
+                anyhow::bail!("no Zone headset found (is it switched on?)");
+            };
+            if let Some(m) = auto_sleep {
+                h.set_auto_sleep(m)?;
+            }
+            println!("{}", h.name);
+            println!("  serial: {}", h.serial()?);
+            println!("  battery: {}", headset_battery_text(&h.battery()?));
+            println!("  auto sleep: {} min", h.auto_sleep()?);
         }
         Cmd::Dpi { device, value } => {
             let mut d = open(&device)?;
@@ -237,6 +266,11 @@ fn battery_text(b: &features::Battery) -> String {
         Some(p) => format!("{p}% ({})", b.status),
         None => format!("{} ({})", b.level, b.status),
     }
+}
+
+fn headset_battery_text(b: &centurion::Battery) -> String {
+    let status = if b.full { "full" } else if b.charging { "charging" } else { "discharging" };
+    format!("{}% ({status})", b.percent)
 }
 
 fn print_smartshift(d: &mut Device) -> Result<()> {
