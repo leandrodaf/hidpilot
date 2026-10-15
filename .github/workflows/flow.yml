@@ -1,0 +1,34 @@
+name: flow
+
+on:
+  push:
+    paths: ["flow/**", "src/**", "Cargo.*", ".github/workflows/flow.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact: hidpilot-flow-linux-x86_64
+            bin: hidpilot-flow
+          - os: windows-latest
+            artifact: hidpilot-flow-windows-x86_64
+            bin: hidpilot-flow.exe
+          - os: macos-latest
+            artifact: hidpilot-flow-macos-arm64
+            bin: hidpilot-flow
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
+      - run: cargo test -p hidpilot-flow --release
+      - run: cargo build -p hidpilot-flow --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/release/${{ matrix.bin }}

@@ -10,5 +10,8 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 libc = "0.2.190"
 
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+hidapi = { version = "2", default-features = false, features = ["windows-native", "macos-shared-device"] }
+
 [workspace]
 members = [".", "flow", "gui"]

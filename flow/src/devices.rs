@@ -3,7 +3,6 @@
 use crate::proto::DeviceChannel;
 use anyhow::Result;
 
-#[cfg(target_os = "linux")]
 mod imp {
     use super::*;
     use hidpilot::features;

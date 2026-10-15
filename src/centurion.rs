@@ -46,7 +46,7 @@ pub struct Battery {
 pub fn find() -> Result<Option<Headset>> {
     for info in hidraw::enumerate()? {
         let known = info.vendor == LOGITECH && RECEIVERS.iter().any(|(pid, _)| *pid == info.product);
-        if !known || !info.has_report_id(REPORT) || info.report_descriptor.len() < 200 {
+        if !known || !info.has_report_id(REPORT) {
             continue;
         }
         if info.product == 0x0af1 {
