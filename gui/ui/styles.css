@@ -144,7 +144,7 @@ input[type="range"].line::-webkit-slider-thumb { -webkit-appearance: none; width
 .eq .band .rail { position: absolute; top: 0; bottom: 0; width: 6px; border-radius: 3px; background: var(--track); opacity: .6; }
 .eq .band .fill { position: absolute; bottom: 0; width: 6px; border-radius: 3px; background: var(--primary-light); }
 .eq .band .knob { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--primary); transform: translateY(50%); }
-.eq .band input { position: absolute; inset: 0; opacity: 0; cursor: ns-resize; writing-mode: vertical-lr; direction: rtl; -webkit-appearance: slider-vertical; width: 100%; height: 100%; margin: 0; }
+.eq .band { cursor: ns-resize; touch-action: none; }
 .eq-labels { display: flex; justify-content: space-between; padding: 14px 18px 0; font-size: 12px; letter-spacing: 0.4px; color: var(--text-soft); }
 .eq-caption { text-align: center; color: var(--text-soft); font-size: 12px; font-weight: 700; margin-top: 18px; }
 .section-title { display: flex; justify-content: space-between; align-items: center; padding: 22px 16px 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; }

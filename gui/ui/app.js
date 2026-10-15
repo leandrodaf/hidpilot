@@ -202,18 +202,17 @@ function eqCurve(bands) {
 
 function eqPage(s) {
   const eq = s.equalizer || { bands: [0, 0, 0, 0, 0], preset: "Default" };
-  const bands = state.eqDraft || eq.bands;
+  const bands = eq.bands;
   const knobs = bands
     .map(
-      (v, i) => `<div class="band">
+      (v, i) => `<div class="band" data-band="${i}" role="slider" aria-label="Banda ${i + 1}" aria-valuemin="${EQ_MIN}" aria-valuemax="${EQ_MAX}" aria-valuenow="${v}">
         <div class="rail"></div>
         <div class="fill" style="height:${eqFrac(v) * 100}%"></div>
         <div class="knob" style="bottom:${eqFrac(v) * 100}%"></div>
-        <input type="range" min="${EQ_MIN}" max="${EQ_MAX}" step="1" value="${v}" data-band="${i}" aria-label="Banda ${i + 1}">
       </div>`,
     )
     .join("");
-  const current = state.eqDraft ? "Custom" : eq.preset;
+  const current = eq.preset;
   const presets = [...s.presets.map((p) => p.name), "Custom"]
     .map((n) => `<button class="row click" data-preset="${esc(n)}" style="width:100%"><span>${esc(n)}</span><span class="radio ${n === current ? "on" : ""}"></span></button>`)
     .join("");
@@ -380,7 +379,6 @@ app.addEventListener("click", async (ev) => {
   if (d.preset) {
     const p = state.snap.presets.find((x) => x.name === d.preset);
     if (!p) return;
-    state.eqDraft = null;
     return set("equalizer", p.bands);
   }
   if (d.host) return set("host", Number(d.host));
@@ -437,27 +435,49 @@ app.addEventListener("input", (ev) => {
     app.querySelector("[data-dpi]")?.focus();
   } else if (t.dataset.name !== undefined) {
     state.draft = t.value;
-  } else if (t.dataset.band !== undefined) {
-    const bands = [...(state.eqDraft || state.snap.equalizer.bands)];
-    bands[Number(t.dataset.band)] = Number(t.value);
-    state.eqDraft = bands;
-    // Redraw only the knobs and curve; keep the slider being dragged.
-    const box = app.querySelector(".eq");
-    box.querySelector("svg").outerHTML = eqCurve(bands);
-    const band = t.closest(".band");
-    band.querySelector(".fill").style.height = `${eqFrac(bands[t.dataset.band]) * 100}%`;
-    band.querySelector(".knob").style.bottom = `${eqFrac(bands[t.dataset.band]) * 100}%`;
   }
 });
 
-// Send the EQ when a band is released, not on every pixel of the drag.
-app.addEventListener("change", async (ev) => {
-  if (ev.target.dataset.band !== undefined && state.eqDraft) {
-    const bands = state.eqDraft;
-    await set("equalizer", bands);
-    state.eqDraft = null;
-    render();
-  }
+// EQ bands are dragged with the pointer. Only a press that starts on a band and is then
+// released writes to the headset, so stray clicks or re-renders never change the EQ.
+let eqDrag = null;
+function eqValueAt(band, clientY) {
+  const r = band.getBoundingClientRect();
+  const frac = 1 - Math.min(1, Math.max(0, (clientY - r.top) / r.height));
+  return Math.round(EQ_MIN + frac * (EQ_MAX - EQ_MIN));
+}
+function eqShow(i, bands) {
+  const box = app.querySelector(".eq");
+  if (!box) return;
+  box.querySelector("svg").outerHTML = eqCurve(bands);
+  const band = box.querySelector(`.band[data-band="${i}"]`);
+  band.querySelector(".fill").style.height = `${eqFrac(bands[i]) * 100}%`;
+  band.querySelector(".knob").style.bottom = `${eqFrac(bands[i]) * 100}%`;
+}
+app.addEventListener("pointerdown", (ev) => {
+  const band = ev.target.closest(".eq .band");
+  if (!band || ev.button !== 0) return;
+  band.setPointerCapture(ev.pointerId);
+  const i = Number(band.dataset.band);
+  const bands = [...(state.snap.equalizer?.bands || [0, 0, 0, 0, 0])];
+  eqDrag = { i, band, bands };
+  bands[i] = eqValueAt(band, ev.clientY);
+  eqShow(i, bands);
+});
+app.addEventListener("pointermove", (ev) => {
+  if (!eqDrag) return;
+  eqDrag.bands[eqDrag.i] = eqValueAt(eqDrag.band, ev.clientY);
+  eqShow(eqDrag.i, eqDrag.bands);
+});
+app.addEventListener("pointerup", async () => {
+  if (!eqDrag) return;
+  const { bands } = eqDrag;
+  eqDrag = null;
+  await set("equalizer", bands);
+});
+app.addEventListener("pointercancel", () => {
+  eqDrag = null;
+  render();
 });
 
 // Keep battery levels fresh while the window is open.
