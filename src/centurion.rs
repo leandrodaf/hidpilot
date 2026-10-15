@@ -27,6 +27,25 @@ pub mod feature {
     pub const DEVICE_NAME: u16 = 0x0101;
     pub const BATTERY_SOC: u16 = 0x0104;
     pub const AUTO_SLEEP: u16 = 0x0108;
+    pub const EARCON: u16 = 0x0109;
+    pub const EQ: u16 = 0x0201;
+    pub const AUDIO: u16 = 0x0500;
+    pub const BT_CONNECTIONS: u16 = 0x0501;
+    /// Also holds factory reset (fn 4): never call functions here that are not wrapped below.
+    pub const MISC: u16 = 0x0502;
+}
+
+pub const NAME_MAX: usize = 30;
+pub const EQ_BANDS: usize = 5;
+/// Sidetone steps the headset takes (Logi Tune shows them as 0-100 % in tens).
+pub const SIDETONE_MAX: u8 = 10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Equalizer {
+    /// Passed through untouched, as Logi Tune does.
+    pub mode: u8,
+    /// Gain per band in dB.
+    pub bands: [i8; EQ_BANDS],
 }
 
 pub struct Headset {
@@ -140,5 +159,87 @@ impl Headset {
         }
         self.call(feature::AUTO_SLEEP, 1, &[minutes])?;
         Ok(())
+    }
+
+    // Setters below always send every parameter: with a short frame the firmware reads the
+    // missing ones from the zero padding and applies them.
+
+    pub fn set_name(&mut self, name: &str) -> Result<()> {
+        if name.is_empty() || name.len() > NAME_MAX || !name.is_ascii() {
+            bail!("name must be 1-{NAME_MAX} plain ASCII characters");
+        }
+        let mut p = vec![name.len() as u8];
+        p.extend_from_slice(name.as_bytes());
+        p.push(0);
+        self.call(feature::DEVICE_NAME, 1, &p)?;
+        self.name = name.to_string();
+        Ok(())
+    }
+
+    pub fn equalizer(&mut self) -> Result<Equalizer> {
+        let r = self.call(feature::EQ, 0, &[])?;
+        if r.len() < 1 + EQ_BANDS {
+            bail!("short equalizer reply");
+        }
+        let mut bands = [0i8; EQ_BANDS];
+        for (b, v) in bands.iter_mut().zip(&r[1..]) {
+            *b = *v as i8;
+        }
+        Ok(Equalizer { mode: r[0], bands })
+    }
+
+    pub fn set_equalizer(&mut self, eq: Equalizer) -> Result<()> {
+        let mut p = vec![eq.mode];
+        p.extend(eq.bands.iter().map(|b| *b as u8));
+        self.call(feature::EQ, 1, &p)?;
+        Ok(())
+    }
+
+    pub fn mic_muted(&mut self) -> Result<bool> {
+        Ok(self.call(feature::AUDIO, 0, &[])?[0] != 0)
+    }
+
+    pub fn set_mic_muted(&mut self, on: bool) -> Result<()> {
+        self.call(feature::AUDIO, 1, &[on as u8])?;
+        Ok(())
+    }
+
+    /// Sidetone level 0..=SIDETONE_MAX (how much of your own voice you hear).
+    pub fn sidetone(&mut self) -> Result<u8> {
+        let v = self.call(feature::AUDIO, 2, &[])?[0];
+        // High nibble flags a negative value, which this headset never reports.
+        Ok(if v & 0xF0 != 0 { 0 } else { v & 0x0F })
+    }
+
+    pub fn set_sidetone(&mut self, level: u8) -> Result<()> {
+        if level > SIDETONE_MAX {
+            bail!("sidetone must be 0-{SIDETONE_MAX}");
+        }
+        self.call(feature::AUDIO, 3, &[level])?;
+        Ok(())
+    }
+
+    pub fn voice_prompts(&mut self) -> Result<bool> {
+        Ok(self.call(feature::MISC, 2, &[])?[0] != 0)
+    }
+
+    pub fn set_voice_prompts(&mut self, on: bool) -> Result<()> {
+        self.call(feature::MISC, 3, &[on as u8])?;
+        Ok(())
+    }
+
+    /// Muting the mic by flipping the boom up.
+    pub fn rotate_to_mute(&mut self) -> Result<bool> {
+        Ok(self.call(feature::MISC, 5, &[])?[0] != 0)
+    }
+
+    pub fn set_rotate_to_mute(&mut self, on: bool) -> Result<()> {
+        self.call(feature::MISC, 6, &[on as u8])?;
+        Ok(())
+    }
+
+    /// Bluetooth hosts connected right now (the USB receiver is not counted).
+    pub fn bluetooth_connections(&mut self) -> Result<u8> {
+        Ok(self.call(feature::BT_CONNECTIONS, 0, &[])?[0])
     }
 }

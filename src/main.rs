@@ -67,6 +67,23 @@ enum Cmd {
         /// Minutes of inactivity before it switches off
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
         auto_sleep: Option<u8>,
+        /// Rename the headset (as other devices see it over Bluetooth)
+        #[arg(long)]
+        name: Option<String>,
+        /// Equalizer: "flat" or five gains in dB, e.g. 4,2,0,-2,3
+        #[arg(long, allow_hyphen_values = true)]
+        eq: Option<String>,
+        /// How much of your own voice you hear (0-10)
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=10))]
+        sidetone: Option<u8>,
+        #[arg(long, value_enum)]
+        mute: Option<Toggle>,
+        /// Spoken prompts (power, battery, connection)
+        #[arg(long, value_enum)]
+        voice_prompts: Option<Toggle>,
+        /// Mute the mic by flipping the boom up
+        #[arg(long, value_enum)]
+        rotate_to_mute: Option<Toggle>,
     },
     /// Run the background service (publishes batteries to GNOME; needs root)
     Daemon,
@@ -145,17 +162,56 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Cmd::Headset { auto_sleep } => {
+        Cmd::Headset { auto_sleep, name, eq, sidetone, mute, voice_prompts, rotate_to_mute } => {
             let Some(mut h) = centurion::find()? else {
                 anyhow::bail!("no Zone headset found (is it switched on?)");
             };
             if let Some(m) = auto_sleep {
                 h.set_auto_sleep(m)?;
             }
+            if let Some(n) = name {
+                h.set_name(&n)?;
+            }
+            if let Some(e) = eq {
+                // "flat" is the factory state, mode byte included.
+                let mode = if e.eq_ignore_ascii_case("flat") { 0 } else { h.equalizer().map(|e| e.mode).unwrap_or(0) };
+                h.set_equalizer(centurion::Equalizer { mode, bands: parse_eq(&e)? })?;
+            }
+            if let Some(v) = sidetone {
+                h.set_sidetone(v)?;
+            }
+            if let Some(t) = mute {
+                h.set_mic_muted(t.on())?;
+            }
+            if let Some(t) = voice_prompts {
+                h.set_voice_prompts(t.on())?;
+            }
+            if let Some(t) = rotate_to_mute {
+                h.set_rotate_to_mute(t.on())?;
+            }
             println!("{}", h.name);
             println!("  serial: {}", h.serial()?);
             println!("  battery: {}", headset_battery_text(&h.battery()?));
             println!("  auto sleep: {} min", h.auto_sleep()?);
+            if let Ok(e) = h.equalizer() {
+                let bands: Vec<String> = e.bands.iter().map(|b| format!("{b:+}")).collect();
+                println!("  equalizer: {} dB", bands.join(" "));
+            }
+            if let Ok(v) = h.sidetone() {
+                println!("  sidetone: {v}/{}", centurion::SIDETONE_MAX);
+            }
+            if let Ok(m) = h.mic_muted() {
+                println!("  mic: {}", if m { "muted" } else { "live" });
+            }
+            if let Ok(v) = h.voice_prompts() {
+                println!("  voice prompts: {}", on_off(v));
+            }
+            if let Ok(v) = h.rotate_to_mute() {
+                println!("  rotate to mute: {}", on_off(v));
+            }
+            if let Ok(n) = h.bluetooth_connections() {
+                println!("  bluetooth hosts connected: {n}");
+            }
         }
         Cmd::Dpi { device, value } => {
             let mut d = open(&device)?;
@@ -259,6 +315,20 @@ fn battery_text(b: &features::Battery) -> String {
         Some(p) => format!("{p}% ({})", b.status),
         None => format!("{} ({})", b.level, b.status),
     }
+}
+
+fn parse_eq(s: &str) -> Result<[i8; centurion::EQ_BANDS]> {
+    if s.eq_ignore_ascii_case("flat") {
+        return Ok([0; centurion::EQ_BANDS]);
+    }
+    let gains: Vec<i8> = s
+        .split(',')
+        .map(|g| g.trim().parse::<i8>())
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|_| anyhow::anyhow!("equalizer gains must be whole dB numbers"))?;
+    gains
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("the equalizer has {} bands", centurion::EQ_BANDS))
 }
 
 fn headset_battery_text(b: &centurion::Battery) -> String {
