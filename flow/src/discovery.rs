@@ -3,7 +3,7 @@
 
 use crate::config::{Config, PORT};
 use anyhow::Result;
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{IfKind, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
@@ -23,6 +23,18 @@ pub struct Discovery {
 
 pub fn start(cfg: &Config) -> Result<(Discovery, mpsc::UnboundedReceiver<Found>)> {
     let daemon = ServiceDaemon::new()?;
+    // Containers, VMs and VPN tunnels are not the LAN; announcing them only makes peers
+    // waste time dialing addresses they cannot reach.
+    let virtual_ifs: Vec<IfKind> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.name)
+        .filter(|n| is_virtual(n))
+        .map(IfKind::Name)
+        .collect();
+    if !virtual_ifs.is_empty() {
+        daemon.disable_interface(virtual_ifs)?;
+    }
     let host = format!("{}.local.", cfg.my_id());
     let props = [("name", cfg.name.as_str()), ("key", cfg.public_key.as_str())];
     let info = ServiceInfo::new(SERVICE, &cfg.my_id(), &host, "", PORT, &props[..])?.enable_addr_auto();
@@ -48,4 +60,10 @@ pub fn start(cfg: &Config) -> Result<(Discovery, mpsc::UnboundedReceiver<Found>)
         }
     });
     Ok((Discovery { _daemon: daemon }, rx))
+}
+
+fn is_virtual(name: &str) -> bool {
+    const PREFIXES: [&str; 10] = ["docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "tun", "tap", "wg", "utun"];
+    let n = name.to_lowercase();
+    PREFIXES.iter().any(|p| n.starts_with(p)) || n.contains("warp") || n.contains("tailscale") || n.contains("zerotier")
 }
