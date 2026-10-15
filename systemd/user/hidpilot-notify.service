@@ -1,0 +1,17 @@
+[Unit]
+Description=hidpilot: low battery notifications
+Documentation=https://github.com/leandrodaf/hidpilot
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/hidpilot notify
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,44 @@
+[Unit]
+Description=hidpilot: show Logitech device batteries in GNOME
+Documentation=https://github.com/leandrodaf/hidpilot
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hidpilot daemon
+Restart=on-failure
+RestartSec=5
+
+# It needs /dev/uhid (to publish batteries) and the hidraw nodes, nothing else.
+DevicePolicy=closed
+DeviceAllow=/dev/uhid rw
+DeviceAllow=char-hidraw rw
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

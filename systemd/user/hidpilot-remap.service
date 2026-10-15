@@ -1,0 +1,17 @@
+[Unit]
+Description=hidpilot: custom actions for mouse and keyboard buttons
+Documentation=https://github.com/leandrodaf/hidpilot
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/hidpilot remap run
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=graphical-session.target
