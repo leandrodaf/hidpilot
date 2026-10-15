@@ -35,6 +35,27 @@ hidpilot buttons master                        # reprogrammable buttons
 
 Devices are picked by list number or by any part of their name.
 
+## Button remapping and gestures
+
+`hidpilot remap run` is a user service that gives buttons, the gesture button, the thumb
+wheel and keyboard special keys new actions, like Logi Options+. Without configuration the
+gesture button gets the Options+ gestures: click or swipe up for the activities overview,
+down for the desktop, left/right to change workspace.
+
+```sh
+hidpilot remap buttons master                  # buttons that take an action
+hidpilot remap actions                         # what they can do
+hidpilot remap set master back key:alt+left
+hidpilot remap set master forward tab-next --app firefox    # only while Firefox has focus
+hidpilot remap set mechanical emoji cmd:gnome-characters
+hidpilot remap thumbwheel master volume
+hidpilot remap run
+```
+
+Settings live in `~/.config/hidpilot/buttons.toml` and are reloaded while the service runs.
+Only buttons with an action in the profile of the focused app are diverted; the rest keep
+their normal behaviour, and stopping the service gives every button back.
+
 ## Supported HID++ features
 
 | Feature | ID | Commands |
@@ -53,7 +74,6 @@ Devices are picked by list number or by any part of their name.
 ## Roadmap
 
 - Zone Vibe Wireless headset: battery, sidetone, equalizer, auto power off, voice prompts
-- Button remapping and gestures (needs a small daemon)
 - Graphical interface
 
 ## Credits

@@ -1,2 +1,4 @@
 KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"
 KERNEL=="hidraw*", KERNELS=="*:046D:*", TAG+="uaccess"
+# Button remapping types keys and clicks through a virtual device.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

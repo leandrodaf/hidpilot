@@ -419,11 +419,40 @@ pub fn set_backlight(dev: &mut Device, mode: Option<BacklightMode>, level: Optio
 
 // ---------- reprogrammable controls (0x1b04) ----------
 
+/// Capability bits of a control (getCidInfo bytes 4 and 8 as one field).
+pub mod key_flag {
+    pub const REPROGRAMMABLE: u16 = 0x0010;
+    pub const DIVERTABLE: u16 = 0x0020;
+    pub const PERSISTENTLY_DIVERTABLE: u16 = 0x0040;
+    pub const VIRTUAL: u16 = 0x0080;
+    pub const RAW_XY: u16 = 0x0100;
+}
+
+/// Reporting bits (get/setCidReporting byte 2). Each setting has a "valid" bit right
+/// above it that tells the device to apply that setting at all.
+pub mod report_flag {
+    pub const DIVERTED: u8 = 0x01;
+    pub const PERSISTENTLY_DIVERTED: u8 = 0x04;
+    pub const RAW_XY: u8 = 0x10;
+}
+
 pub struct Control {
     pub cid: u16,
     pub task: u16,
+    /// key_flag bits
+    pub flags: u16,
     pub divertable: bool,
     pub diverted: bool,
+    pub raw_xy: bool,
+}
+
+impl Control {
+    pub fn supports_raw_xy(&self) -> bool {
+        self.flags & key_flag::RAW_XY != 0
+    }
+    pub fn is_virtual(&self) -> bool {
+        self.flags & key_flag::VIRTUAL != 0
+    }
 }
 
 pub fn controls(dev: &mut Device) -> Result<Vec<Control>> {
@@ -433,16 +462,58 @@ pub fn controls(dev: &mut Device) -> Result<Vec<Control>> {
         let r = dev.call(f::REPROG_CONTROLS_V4, 1, &[i])?;
         let cid = u16::from_be_bytes([r[0], r[1]]);
         let task = u16::from_be_bytes([r[2], r[3]]);
-        let flags = r[4];
-        let rep = dev.call(f::REPROG_CONTROLS_V4, 2, &r[0..2])?;
-        out.push(Control { cid, task, divertable: flags & 0x20 != 0, diverted: rep[2] & 0x01 != 0 });
+        let flags = r[4] as u16 | (r[8] as u16) << 8;
+        let rep = cid_reporting(dev, cid)?;
+        out.push(Control {
+            cid,
+            task,
+            flags,
+            divertable: flags & key_flag::DIVERTABLE != 0,
+            diverted: rep & report_flag::DIVERTED != 0,
+            raw_xy: rep & report_flag::RAW_XY != 0,
+        });
     }
     Ok(out)
 }
 
-/// Human-readable names for the control IDs found on MX mice.
+/// Current report_flag bits of a control.
+pub fn cid_reporting(dev: &mut Device, cid: u16) -> Result<u8> {
+    let r = dev.call(f::REPROG_CONTROLS_V4, 2, &cid.to_be_bytes())?;
+    Ok(r[2])
+}
+
+/// Diverts a control to HID++ events (temporarily: the device forgets on power cycle or
+/// host switch) or gives it back. `raw_xy` also reports pointer motion while it is held.
+/// Settings passed as None are left as they are; the mapping is never changed.
+pub fn set_cid_reporting(dev: &mut Device, cid: u16, divert: Option<bool>, raw_xy: Option<bool>) -> Result<()> {
+    let mut bits = 0u8;
+    if let Some(on) = divert {
+        bits |= (report_flag::DIVERTED << 1) | if on { report_flag::DIVERTED } else { 0 };
+    }
+    if let Some(on) = raw_xy {
+        bits |= (report_flag::RAW_XY << 1) | if on { report_flag::RAW_XY } else { 0 };
+    }
+    let [hi, lo] = cid.to_be_bytes();
+    dev.call(f::REPROG_CONTROLS_V4, 3, &[hi, lo, bits, 0, 0])?;
+    Ok(())
+}
+
+/// Thumb wheel reporting: true when its rotation comes as HID++ events instead of
+/// horizontal scrolling.
+pub fn thumbwheel_diverted(dev: &mut Device) -> Result<bool> {
+    Ok(dev.call(f::THUMB_WHEEL, 1, &[])?[0] & 0x01 != 0)
+}
+
+pub fn set_thumbwheel_diverted(dev: &mut Device, on: bool) -> Result<()> {
+    let r = dev.call(f::THUMB_WHEEL, 1, &[])?;
+    dev.call(f::THUMB_WHEEL, 2, &[on as u8, r[1] & 0x01])?;
+    Ok(())
+}
+
+/// Human-readable names for the controls of MX mice and keyboards.
 pub fn control_name(cid: u16) -> &'static str {
     match cid {
+        0x0034 => "Fn",
         0x0050 => "Left click",
         0x0051 => "Right click",
         0x0052 => "Middle click",
@@ -450,7 +521,32 @@ pub fn control_name(cid: u16) -> &'static str {
         0x0056 => "Forward",
         0x00C3 => "Gesture button",
         0x00C4 => "SmartShift toggle",
+        0x00D1 => "Easy-Switch 1",
+        0x00D2 => "Easy-Switch 2",
+        0x00D3 => "Easy-Switch 3",
+        0x00D4 => "Search",
         0x00D7 => "Virtual gesture button",
+        0x00DE => "Fn lock",
+        0x00E2 => "Backlight down",
+        0x00E3 => "Backlight up",
+        0x00E7 => "Mute",
+        0x00E8 => "Volume down",
+        0x00E9 => "Volume up",
+        0x0103 => "Dictation",
+        0x0108 => "Emoji",
+        0x010A => "Screenshot",
+        0x010B => "Grave accent",
+        0x010C => "Tab",
+        0x010D => "Caps Lock",
+        0x010E => "Left Shift",
+        0x010F => "Left Ctrl",
+        0x0110 => "Left Option / Start",
+        0x0111 => "Left Command / Alt",
+        0x0112 => "Right Command / Alt",
+        0x0115 => "Right Shift",
+        0x0117 => "Lock",
+        0x013C => "Right Option / Start",
+        0x0141 => "Play/Pause",
         0x01A0 => "Thumb wheel click",
         _ => "",
     }
