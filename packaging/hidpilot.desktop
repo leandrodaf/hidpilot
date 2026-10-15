@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=hidpilot
+GenericName=Mouse, Keyboard and Headset Settings
+GenericName[pt_BR]=Configurações de mouse, teclado e fone
+Comment=Configure Logitech mice, keyboards and headsets
+Comment[pt_BR]=Configure mouses, teclados e fones Logitech
+Exec=hidpilot-gui
+Icon=hidpilot
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=logitech;mouse;keyboard;headset;dpi;battery;flow;
+StartupWMClass=hidpilot
