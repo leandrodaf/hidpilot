@@ -22,6 +22,8 @@ const BUS_VIRTUAL: u16 = 0x06;
 pub enum Kind {
     Mouse,
     Keyboard,
+    /// Consumer-control node (mute key); udev tags it as a headset so UPower shows a headset.
+    Headset,
 }
 
 /// Report 1 = [buttons/modifiers..., battery 0-100, charging flag].
@@ -38,6 +40,11 @@ fn descriptor(kind: Kind) -> Vec<u8> {
         Kind::Keyboard => vec![
             0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x01, // Generic Desktop / Keyboard, report 1
             0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
+        ],
+        Kind::Headset => vec![
+            0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x01, // Consumer Control, report 1
+            0x15, 0x00, 0x25, 0x01, 0x09, 0xE2, 0x75, 0x01, 0x95, 0x01, 0x81, 0x02, // Mute
+            0x75, 0x07, 0x95, 0x01, 0x81, 0x03, // padding
         ],
     };
     d.extend_from_slice(&[
@@ -109,7 +116,7 @@ impl BatteryDevice {
     pub fn update(&mut self, percent: u8, charging: bool) -> Result<()> {
         let report: Vec<u8> = match self.kind {
             Kind::Mouse => vec![0x01, 0, 0, 0, percent.min(100), charging as u8],
-            Kind::Keyboard => vec![0x01, 0, percent.min(100), charging as u8],
+            Kind::Keyboard | Kind::Headset => vec![0x01, 0, percent.min(100), charging as u8],
         };
         let mut ev = vec![0u8; EVENT_SIZE];
         ev[0..4].copy_from_slice(&UHID_INPUT2.to_ne_bytes());

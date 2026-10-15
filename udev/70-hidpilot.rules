@@ -1,2 +1,11 @@
+# hidpilot: let the logged-in user reach Logitech HID devices without sudo.
 KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"
 KERNEL=="hidraw*", KERNELS=="*:046D:*", TAG+="uaccess"
+
+# Button remapping creates a virtual input device through uinput.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
+
+# The battery daemon mirrors the Zone headset as a virtual HID device. UPower picks a
+# battery's type from its input siblings, and sound properties win over input ones, so
+# tagging the node as a headset makes GNOME show a headset icon.
+SUBSYSTEM=="input", ATTRS{uniq}=="hidpilot-headset-*", ENV{SOUND_INITIALIZED}="1", ENV{SOUND_FORM_FACTOR}="headset"

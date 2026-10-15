@@ -87,6 +87,8 @@ enum Cmd {
     },
     /// Run the background service (publishes batteries to GNOME; needs root)
     Daemon,
+    /// Warn on the desktop when a device battery runs low (run as your user)
+    Notify,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -294,6 +296,7 @@ fn main() -> Result<()> {
             print_platforms(&mut d)?;
         }
         Cmd::Daemon => daemon::run()?,
+        Cmd::Notify => hidpilot::notify::run()?,
         Cmd::Buttons { device } => {
             let mut d = open(&device)?;
             for c in features::controls(&mut d)? {
