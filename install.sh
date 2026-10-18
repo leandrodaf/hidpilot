@@ -64,7 +64,7 @@ subnet() {
 
 plan() {
     bold "hidpilot will install:"
-    echo "  • hidpilot, hidpilot-flow and the hidpilot app in $BIN (and in the app grid)"
+    echo "  • hidpilot, hidpilot-flow and the Orbit app in $BIN (and in the app grid)"
     echo "  • battery service: GNOME shows your mouse, keyboard and headset batteries   (sudo)"
     echo "  • device access rules, so no sudo is needed afterwards                     (sudo)"
     echo "  • low battery notifications"
@@ -141,6 +141,7 @@ install_system_parts() {
     sudo install -Dm755 target/release/hidpilot /usr/local/bin/hidpilot
     sudo install -Dm644 udev/70-hidpilot.rules /etc/udev/rules.d/70-hidpilot.rules
     sudo install -Dm644 systemd/system/hidpilot-battery.service /etc/systemd/system/hidpilot-battery.service
+    echo uhid | sudo tee /etc/modules-load.d/hidpilot.conf >/dev/null
     sudo udevadm control --reload
     sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=misc --subsystem-match=input
     sudo systemctl daemon-reload
@@ -206,7 +207,7 @@ main() {
     fetch_assets
     verify
     echo
-    bold "Done. Open \"hidpilot\" from the app grid; it also starts with the computer, in the tray."
+    bold "Done. Open \"Orbit\" from the app grid; it also starts with the computer, in the tray."
 }
 
 main "$@"

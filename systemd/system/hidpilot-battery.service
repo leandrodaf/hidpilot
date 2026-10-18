@@ -5,6 +5,10 @@ After=systemd-udevd.service
 
 [Service]
 Type=simple
+# uhid is a module the kernel loads on first use, but the sandbox below needs its sysfs
+# directory to exist already ("+" runs this one step outside the sandbox; the "-" on
+# ReadWritePaths below lets that step start before the directory exists).
+ExecStartPre=+/sbin/modprobe uhid
 ExecStart=/usr/local/bin/hidpilot daemon
 Restart=on-failure
 RestartSec=5
@@ -22,7 +26,7 @@ PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectKernelTunables=yes
 # ...except the uevent files of its own mirrors, to announce a new battery to UPower.
-ReadWritePaths=/sys/devices/virtual/misc/uhid
+ReadWritePaths=-/sys/devices/virtual/misc/uhid
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes

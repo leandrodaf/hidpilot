@@ -4,13 +4,31 @@ use crate::hidraw::{self, BUS_BLUETOOTH, BUS_USB, Hidraw, HidrawInfo};
 use anyhow::{Result, anyhow, bail};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 pub const LOGITECH: u16 = 0x046d;
 const SHORT: u8 = 0x10;
 const LONG: u8 = 0x11;
 const LONG_LEN: usize = 20;
-const SOFTWARE_ID: u8 = 0x0A;
+/// Software id stamped on requests; replies echo it. Every hidpilot program talking to the
+/// same receiver at once (app, Flow, services, CLI) needs its own, or one of them takes the
+/// other's reply as its own (a scrambled device name, a wrong feature index).
+static SOFTWARE_ID: AtomicU8 = AtomicU8::new(software_id::CLI);
+
+pub mod software_id {
+    pub const CLI: u8 = 0x0A;
+    pub const REMAP: u8 = 0x0B;
+    pub const DAEMON: u8 = 0x0C;
+    pub const NOTIFY: u8 = 0x0D;
+    pub const FLOW: u8 = 0x0E;
+    pub const APP: u8 = 0x0F;
+}
+
+/// Picks this program's software id (one of `software_id`) for every device opened after.
+pub fn use_software_id(id: u8) {
+    SOFTWARE_ID.store(id.clamp(1, 15), Ordering::Relaxed);
+}
 /// Reports that arrived while waiting for a reply and are kept for `next_report`.
 const PENDING_MAX: usize = 64;
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -99,7 +117,7 @@ impl Device {
             name: String::new(),
             via,
             features: HashMap::new(),
-            software_id: SOFTWARE_ID,
+            software_id: SOFTWARE_ID.load(Ordering::Relaxed),
             pending: VecDeque::new(),
         })
     }

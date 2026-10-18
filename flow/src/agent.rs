@@ -7,15 +7,16 @@ use crate::devices::Devices;
 use crate::discovery;
 use crate::link::{self, Link, LinkReader};
 use crate::pointer::Pointer;
+use crate::pairing::{self, PAIR_PORT};
 use crate::proto::{DeviceChannel, Msg, VERSION};
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 const POLL: Duration = Duration::from_millis(8);
 /// The pointer must stay on the edge this long, so brushing past it does nothing.
@@ -30,17 +31,43 @@ struct Conn {
     devices: Vec<DeviceChannel>,
 }
 
-struct Shared {
-    cfg: Config,
+pub(crate) struct Shared {
+    pub(crate) cfg: Config,
     cfg_mtime: Option<SystemTime>,
     conns: HashMap<String, Conn>,
     /// True while the mouse is connected to this machine.
     holding: bool,
     settle_until: Instant,
     devices: Option<Devices>,
+    /// Every Flow computer announcing itself on the network, paired or not, by key.
+    pub(crate) nearby: HashMap<String, discovery::Found>,
+    pub(crate) incoming: Option<Incoming>,
+    pub(crate) outgoing: Option<Outgoing>,
+    /// When recent pairing requests arrived, to refuse a flood of them.
+    requests: VecDeque<Instant>,
 }
 
-type State = Arc<Mutex<Shared>>;
+/// Someone asked to pair with this computer: the code to type over there.
+pub(crate) struct Incoming {
+    pub(crate) name: String,
+    pub(crate) code: String,
+    pub(crate) until: Instant,
+}
+
+/// This computer asked another one to pair.
+pub(crate) struct Outgoing {
+    pub(crate) key: String,
+    pub(crate) name: String,
+    /// "asking", "code" (waiting for the person to type it), "done" or "failed".
+    pub(crate) status: &'static str,
+    pub(crate) error: Option<String>,
+    code_tx: Option<oneshot::Sender<String>>,
+}
+
+pub(crate) type State = Arc<Mutex<Shared>>;
+
+/// More pairing requests than this in ten minutes are dropped: each one is a guess.
+const MAX_REQUESTS: usize = 6;
 
 pub async fn run() -> Result<()> {
     let cfg = Config::load_or_create()?;
@@ -53,10 +80,18 @@ pub async fn run() -> Result<()> {
         holding: false,
         settle_until: Instant::now(),
         devices: None,
+        nearby: HashMap::new(),
+        incoming: None,
+        outgoing: None,
+        requests: VecDeque::new(),
     }));
     let clipboard = Clipboard::start();
 
     rescan_devices(state.clone(), Duration::ZERO);
+    {
+        let state = state.clone();
+        crate::audio::watch(move || state.lock().unwrap().cfg.audio_follows);
+    }
 
     let listener = TcpListener::bind(("0.0.0.0", PORT)).await.with_context(|| format!("port {PORT} is busy"))?;
     {
@@ -76,14 +111,36 @@ pub async fn run() -> Result<()> {
         });
     }
 
+    // Pairing requests from computers that are not paired yet.
+    match TcpListener::bind(("0.0.0.0", PAIR_PORT)).await {
+        Ok(pair_listener) => {
+            let (state, clipboard) = (state.clone(), clipboard.clone());
+            tokio::spawn(async move {
+                while let Ok((stream, addr)) = pair_listener.accept().await {
+                    tokio::spawn(answer_pairing(state.clone(), clipboard.clone(), stream, addr));
+                }
+            });
+        }
+        Err(e) => eprintln!("flow: pairing port {PAIR_PORT} is busy ({e}); other computers cannot ask to pair"),
+    }
+    crate::ui::start(state.clone(), clipboard.clone());
+
     // Dial paired peers we hear about. Only the side with the smaller key dials, so two
     // machines never open two links to each other.
     {
         let (state, clipboard) = (state.clone(), clipboard.clone());
         tokio::spawn(async move {
-            while let Some(f) = found.recv().await {
+            while let Some(ev) = found.recv().await {
+                let f = match ev {
+                    discovery::Event::Found(f) => f,
+                    discovery::Event::Gone(id) => {
+                        state.lock().unwrap().nearby.retain(|k, _| Config::id_of(k) != id);
+                        continue;
+                    }
+                };
                 let should = {
                     let mut s = state.lock().unwrap();
+                    s.nearby.insert(f.key.clone(), f.clone());
                     let me = s.cfg.public_key.clone();
                     match s.cfg.peers.get_mut(&f.key) {
                         Some(p) => {
@@ -136,6 +193,114 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
+/// Another computer asks to pair: show a code here and run the handshake on it.
+async fn answer_pairing(state: State, clipboard: Clipboard, mut stream: TcpStream, addr: SocketAddr) {
+    {
+        let mut s = state.lock().unwrap();
+        let now = Instant::now();
+        s.requests.retain(|t| now.duration_since(*t) < Duration::from_secs(600));
+        let busy = s.incoming.as_ref().is_some_and(|i| i.until > now);
+        if busy || s.requests.len() >= MAX_REQUESTS {
+            eprintln!("flow: pairing request from {addr} refused (busy or too many)");
+            return;
+        }
+        s.requests.push_back(now);
+    }
+    let Ok(req) = pairing::read_request(&mut stream).await else { return };
+    let code = pairing::random_code();
+    let me = {
+        let mut s = state.lock().unwrap();
+        s.incoming = Some(Incoming { name: req.name.clone(), code: code.clone(), until: Instant::now() + pairing::WINDOW });
+        s.cfg.clone()
+    };
+    let (title, body) = pairing::texts(&req.name, &code);
+    pairing::notify(&title, &body);
+    println!("flow: {} asks to pair", req.name);
+    let result = pairing::complete(stream, addr, &me, &code, false, None).await;
+    state.lock().unwrap().incoming = None;
+    match result {
+        Ok((peer, _)) => added_peer(&state, &clipboard, peer),
+        Err(e) => eprintln!("flow: pairing with {} failed: {e:#}", req.name),
+    }
+}
+
+/// This computer asks `key` (seen on the network) to pair; `side` is where its screen is.
+pub(crate) fn ask_pairing(state: &State, clipboard: &Clipboard, key: &str, side: Option<config::Side>) -> Result<()> {
+    let (found, me) = {
+        let mut s = state.lock().unwrap();
+        let f = s.nearby.get(key).cloned().context("that computer is no longer on the network")?;
+        s.outgoing = Some(Outgoing { key: key.into(), name: f.name.clone(), status: "asking", error: None, code_tx: None });
+        (f, s.cfg.clone())
+    };
+    let (state, clipboard) = (state.clone(), clipboard.clone());
+    tokio::spawn(async move {
+        let fail = |state: &State, e: anyhow::Error| {
+            if let Some(o) = state.lock().unwrap().outgoing.as_mut() {
+                o.status = "failed";
+                o.error = Some(format!("{e:#}"));
+            }
+        };
+        let (stream, addr) = match pairing::ask(&found.addrs, &me).await {
+            Ok(v) => v,
+            Err(e) => return fail(&state, e),
+        };
+        let (tx, rx) = oneshot::channel();
+        if let Some(o) = state.lock().unwrap().outgoing.as_mut() {
+            o.status = "code";
+            o.code_tx = Some(tx);
+        }
+        let Ok(Ok(code)) = tokio::time::timeout(pairing::WINDOW, rx).await else {
+            return fail(&state, anyhow::anyhow!("the code expired"));
+        };
+        match pairing::complete(stream, addr, &me, &code, true, side).await {
+            Ok((peer, _)) => {
+                if let Some(o) = state.lock().unwrap().outgoing.as_mut() {
+                    o.status = "done";
+                }
+                added_peer(&state, &clipboard, peer);
+            }
+            Err(e) => fail(&state, e),
+        }
+    });
+    Ok(())
+}
+
+/// The code the person typed for the pairing this computer asked for.
+pub(crate) fn enter_code(state: &State, code: String) -> Result<()> {
+    let mut s = state.lock().unwrap();
+    let tx = s.outgoing.as_mut().and_then(|o| o.code_tx.take()).context("no pairing is waiting for a code")?;
+    let _ = tx.send(code);
+    Ok(())
+}
+
+/// Stores a freshly paired computer (keeping one screen per side) and links to it.
+fn added_peer(state: &State, clipboard: &Clipboard, peer: config::Peer) {
+    let dial_now = {
+        let mut s = state.lock().unwrap();
+        if let Some(side) = peer.side {
+            for p in s.cfg.peers.values_mut() {
+                if p.side == Some(side) {
+                    p.side = None;
+                }
+            }
+        }
+        println!("flow: paired with {}", peer.name);
+        let key = peer.key.clone();
+        let addrs: Vec<SocketAddr> = s.nearby.get(&key).map(|f| f.addrs.clone()).unwrap_or_default();
+        s.cfg.peers.insert(key.clone(), peer);
+        let _ = s.cfg.save();
+        s.cfg_mtime = mtime();
+        (s.cfg.public_key < key).then_some((key, addrs))
+    };
+    if let Some((key, addrs)) = dial_now {
+        tokio::spawn(dial(state.clone(), clipboard.clone(), key, addrs));
+    }
+}
+
+pub(crate) fn is_linked(s: &Shared, key: &str) -> bool {
+    s.conns.contains_key(key)
+}
+
 fn mtime() -> Option<SystemTime> {
     std::fs::metadata(config::path().ok()?).ok()?.modified().ok()
 }
@@ -173,6 +338,7 @@ async fn serve(state: State, clipboard: Clipboard, link: Link, addr: Option<Sock
             name: s.cfg.name.clone(),
             version: VERSION,
             devices: s.devices.as_ref().map(|d| d.channels()).unwrap_or_default(),
+            your_side: None,
         }
     };
     let _ = tx.send(hello);
@@ -201,6 +367,9 @@ async fn serve(state: State, clipboard: Clipboard, link: Link, addr: Option<Sock
 }
 
 async fn read_loop(state: &State, clipboard: &Clipboard, key: &str, mut reader: LinkReader, tx: &mpsc::UnboundedSender<Msg>) -> Result<()> {
+    // A peer's clipboard is only taken together with the mouse arriving from it (it is sent
+    // just before Enter), so a paired computer can never change the clipboard behind your back.
+    let mut clip_in: Option<(crate::proto::Clip, Instant)> = None;
     loop {
         let msg = tokio::time::timeout(KEEPALIVE * 3, reader.recv()).await.context("peer went silent")??;
         match Msg::decode(&msg)? {
@@ -215,7 +384,10 @@ async fn read_loop(state: &State, clipboard: &Clipboard, key: &str, mut reader: 
                 }
                 let _ = s.cfg.save();
             }
-            Msg::Enter { edge, pos } => {
+            Msg::Enter { edge, pos, audio } => {
+                if audio {
+                    thread::spawn(crate::audio::claim);
+                }
                 {
                     let mut s = state.lock().unwrap();
                     s.holding = true;
@@ -224,14 +396,15 @@ async fn read_loop(state: &State, clipboard: &Clipboard, key: &str, mut reader: 
                 if let Ok(p) = Pointer::open() {
                     let _ = p.enter(edge, pos);
                 }
+                if let Some((clip, at)) = clip_in.take() {
+                    if at.elapsed() < Duration::from_secs(2) && state.lock().unwrap().cfg.clipboard {
+                        clipboard.put(clip);
+                    }
+                }
                 // The devices reconnect to us within a second or two; pick them up then.
                 rescan_devices(state.clone(), Duration::from_millis(1500));
             }
-            Msg::Clipboard(clip) => {
-                if state.lock().unwrap().cfg.clipboard {
-                    clipboard.put(clip);
-                }
-            }
+            Msg::Clipboard(clip) => clip_in = Some((clip, Instant::now())),
             Msg::Ping => {
                 let _ = tx.send(Msg::Pong);
             }
@@ -261,7 +434,7 @@ fn rescan_devices(state: State, after: Duration) {
                 // Tell peers which channels we sit on, so they can send devices here.
                 let name = s.cfg.name.clone();
                 for c in s.conns.values() {
-                    let _ = c.tx.send(Msg::Hello { name: name.clone(), version: VERSION, devices: hello_devices.clone() });
+                    let _ = c.tx.send(Msg::Hello { name: name.clone(), version: VERSION, devices: hello_devices.clone(), your_side: None });
                 }
             }
             Err(e) => eprintln!("flow: device scan failed: {e:#}"),
@@ -331,6 +504,7 @@ fn hand_over(state: &State, clipboard: &Clipboard, rt: &tokio::runtime::Handle, 
     let (tx, peer_name, announced) = (conn.tx.clone(), conn.name.clone(), conn.devices.clone());
     let keyboard_follows = s.cfg.keyboard_follows;
     let send_clipboard = s.cfg.clipboard;
+    let audio_follows = s.cfg.audio_follows;
 
     // Work out every switch before touching anything, so a missing channel aborts cleanly.
     let devices = s.devices.as_mut().context("no devices scanned yet")?;
@@ -355,13 +529,16 @@ fn hand_over(state: &State, clipboard: &Clipboard, rt: &tokio::runtime::Handle, 
             let _ = tx.send(Msg::Clipboard(clip));
         }
     }
-    let _ = tx.send(Msg::Enter { edge: side.opposite(), pos });
+    let _ = tx.send(Msg::Enter { edge: side.opposite(), pos, audio: audio_follows });
     // Give the peer a head start to place its pointer before the mouse shows up there.
     thread::sleep(Duration::from_millis(30));
     for (unit, ch) in plan {
         devices.switch(&unit, ch)?;
     }
     s.holding = false;
+    if audio_follows {
+        thread::spawn(crate::audio::release);
+    }
     println!("flow: → {peer_name}");
     Ok(())
 }

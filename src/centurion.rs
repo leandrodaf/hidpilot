@@ -69,6 +69,13 @@ pub struct Battery {
     pub full: bool,
 }
 
+/// True when a Zone receiver is plugged in, with or without its headset.
+pub fn receiver_present() -> bool {
+    hidraw::enumerate()
+        .map(|l| l.iter().any(|i| i.vendor == LOGITECH && RECEIVERS.iter().any(|(pid, _)| *pid == i.product)))
+        .unwrap_or(false)
+}
+
 /// Finds a Zone receiver with its headset switched on.
 pub fn find() -> Result<Option<Headset>> {
     for info in hidraw::enumerate()? {

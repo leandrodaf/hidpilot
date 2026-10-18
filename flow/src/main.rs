@@ -2,25 +2,23 @@
 //! past the screen edge, like Logitech Flow, with end-to-end encryption and no cloud.
 
 mod agent;
+mod audio;
 mod clipboard;
 mod config;
 mod devices;
 mod discovery;
 mod link;
+mod pairing;
 mod pointer;
 mod proto;
+mod ui;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
-use config::{Config, PORT, Peer, Side};
-use proto::{Msg, VERSION};
+use config::{Config, PORT, Side};
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
 
-/// Pairing listens on its own port, and only while `pair` runs.
-const PAIR_PORT: u16 = PORT + 1;
-const PAIR_WINDOW: Duration = Duration::from_secs(120);
 
 #[derive(Parser)]
 #[command(version, about = "Move mouse and keyboard between computers (Flow)")]
@@ -33,7 +31,9 @@ struct Cli {
 enum Cmd {
     /// Run the Flow service (default)
     Run,
-    /// Pair with another computer. Without --to, shows a code and waits for it.
+    /// Open the Flow page: computers nearby, pairing, screen positions, options
+    Ui,
+    /// Pair with another computer (easier from `ui`). The other one shows a code to type here.
     Pair {
         /// The other computer: its name as seen on the network, or ip[:port]
         #[arg(long)]
@@ -54,21 +54,19 @@ enum Cmd {
         clipboard: Option<bool>,
         #[arg(long)]
         keyboard_follows: Option<bool>,
+        /// Move the headset's sound to the computer the mouse goes to
+        #[arg(long)]
+        audio_follows: Option<bool>,
     },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    hidpilot::hidpp::use_software_id(hidpilot::hidpp::software_id::FLOW);
     match Cli::parse().cmd.unwrap_or(Cmd::Run) {
         Cmd::Run => agent::run().await,
-        Cmd::Pair { to: None, .. } => pair_wait().await,
-        Cmd::Pair { to: Some(to), code } => {
-            let code = match code {
-                Some(c) => c,
-                None => prompt("Code shown on the other computer: ")?,
-            };
-            pair_with(&to, code.trim()).await
-        }
+        Cmd::Ui | Cmd::Pair { to: None, .. } => ui::open(),
+        Cmd::Pair { to: Some(to), code } => pair_with(&to, code).await,
         Cmd::Place { peer, side } => {
             let mut cfg = Config::load_or_create()?;
             let key = find_peer(&cfg, &peer)?;
@@ -103,7 +101,7 @@ async fn main() -> Result<()> {
             println!("forgot {peer}");
             Ok(())
         }
-        Cmd::Set { clipboard, keyboard_follows } => {
+        Cmd::Set { clipboard, keyboard_follows, audio_follows } => {
             let mut cfg = Config::load_or_create()?;
             if let Some(v) = clipboard {
                 cfg.clipboard = v;
@@ -111,8 +109,11 @@ async fn main() -> Result<()> {
             if let Some(v) = keyboard_follows {
                 cfg.keyboard_follows = v;
             }
+            if let Some(v) = audio_follows {
+                cfg.audio_follows = v;
+            }
             cfg.save()?;
-            println!("clipboard: {}\nkeyboard follows: {}", cfg.clipboard, cfg.keyboard_follows);
+            println!("clipboard: {}\nkeyboard follows: {}\naudio follows: {}", cfg.clipboard, cfg.keyboard_follows, cfg.audio_follows);
             Ok(())
         }
     }
@@ -138,68 +139,19 @@ fn find_peer(cfg: &Config, query: &str) -> Result<String> {
     }
 }
 
-fn random_code() -> String {
-    format!("{:06}", rand::random::<u32>() % 1_000_000)
-}
-
-/// After the pairing handshake, both sides introduce themselves and store the other.
-async fn finish_pairing(mut l: link::Link, addr: Option<SocketAddr>) -> Result<()> {
-    let mut cfg = Config::load_or_create()?;
-    let hello = Msg::Hello { name: cfg.name.clone(), version: VERSION, devices: Vec::new() };
-    l.writer.send(&hello.encode()).await?;
-    let Msg::Hello { name, .. } = Msg::decode(&l.reader.recv().await?)? else { bail!("unexpected message") };
-    let key = config::hex(&l.remote_key);
-    cfg.peers.insert(
-        key.clone(),
-        Peer { name: name.clone(), key: key.clone(), side: None, addr: addr.map(|a| SocketAddr::new(a.ip(), PORT).to_string()) },
-    );
-    cfg.save()?;
-    println!("paired with {name} ({})", Config::id_of(&key));
-    println!("now say where its screen is, e.g. `hidpilot-flow place \"{name}\" right`");
-    Ok(())
-}
-
-async fn pair_wait() -> Result<()> {
-    let cfg = Config::load_or_create()?;
-    let code = random_code();
-    let listener = TcpListener::bind(("0.0.0.0", PAIR_PORT)).await?;
-    println!("Pairing code for {}: {}  {}", cfg.name, &code[..3], &code[3..]);
-    println!("On the other computer run: hidpilot-flow pair --to \"{}\"", cfg.name);
-    println!("Waiting up to {} s...", PAIR_WINDOW.as_secs());
-    let private = cfg.private()?;
-    let deadline = tokio::time::Instant::now() + PAIR_WINDOW;
-    // A wrong code does not end the window, but three failures do: each one is a guess.
-    let mut failures = 0;
-    loop {
-        let (stream, addr) = tokio::time::timeout_at(deadline, listener.accept()).await.context("nobody paired in time")??;
-        match link::pair(stream, &private, &code, false).await {
-            Ok(l) => return finish_pairing(l, Some(addr)).await,
-            Err(e) => {
-                failures += 1;
-                eprintln!("pairing attempt from {addr} failed: {e:#}");
-                if failures >= 3 {
-                    bail!("too many failed attempts; run pair again for a new code");
-                }
-            }
-        }
-    }
-}
-
-async fn pair_with(to: &str, code: &str) -> Result<()> {
-    let code: String = code.chars().filter(|c| c.is_ascii_digit()).collect();
-    if code.len() != 6 {
-        bail!("the code has 6 digits");
-    }
+async fn pair_with(to: &str, code: Option<String>) -> Result<()> {
     let addrs = resolve(to).await?;
-    let cfg = Config::load_or_create()?;
-    let private = cfg.private()?;
-    for addr in addrs {
-        let pair_addr = SocketAddr::new(addr.ip(), PAIR_PORT);
-        let Ok(Ok(stream)) = tokio::time::timeout(Duration::from_secs(4), TcpStream::connect(pair_addr)).await else { continue };
-        let l = link::pair(stream, &private, &code, true).await?;
-        return finish_pairing(l, Some(pair_addr)).await;
-    }
-    bail!("could not reach {to}")
+    let mut cfg = Config::load_or_create()?;
+    let (stream, addr) = pairing::ask(&addrs, &cfg).await?;
+    let code = match code {
+        Some(c) => c,
+        None => prompt(&format!("Type the code shown on {to}: "))?,
+    };
+    let (peer, _) = pairing::complete(stream, addr, &cfg, code.trim(), true, None).await?;
+    println!("paired with {} ({})", peer.name, Config::id_of(&peer.key));
+    println!("now say where its screen is, e.g. `hidpilot-flow place \"{}\" right`", peer.name);
+    cfg.peers.insert(peer.key.clone(), peer);
+    cfg.save()
 }
 
 /// Accepts ip[:port], or a name announced on the network.
@@ -214,7 +166,8 @@ async fn resolve(to: &str) -> Result<Vec<SocketAddr>> {
     let (_d, mut found) = discovery::start(&cfg)?;
     let want = to.to_lowercase();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
-    while let Ok(Some(f)) = tokio::time::timeout_at(deadline, found.recv()).await {
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, found.recv()).await {
+        let discovery::Event::Found(f) = ev else { continue };
         if f.name.to_lowercase() == want || f.key.starts_with(&want) {
             return Ok(f.addrs);
         }

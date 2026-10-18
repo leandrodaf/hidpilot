@@ -25,7 +25,8 @@ rm -f "$HOME/.local/share/icons/hicolor/scalable/apps/hidpilot.svg"
 if [[ -e /etc/systemd/system/hidpilot-battery.service || -e /etc/udev/rules.d/70-hidpilot.rules ]] &&
     ask "Remove the system parts (battery service, udev rules)? Needs sudo."; then
     sudo systemctl disable --now hidpilot-battery.service 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/hidpilot-battery.service /etc/udev/rules.d/70-hidpilot.rules /usr/local/bin/hidpilot
+    sudo rm -f /etc/systemd/system/hidpilot-battery.service /etc/udev/rules.d/70-hidpilot.rules /usr/local/bin/hidpilot \
+        /etc/modules-load.d/hidpilot.conf
     sudo systemctl daemon-reload
     sudo udevadm control --reload
 fi

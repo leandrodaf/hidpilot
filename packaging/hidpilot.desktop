@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=hidpilot
+Name=Orbit
 GenericName=Mouse, Keyboard and Headset Settings
 GenericName[pt_BR]=Configurações de mouse, teclado e fone
 Comment=Configure Logitech mice, keyboards and headsets
@@ -9,5 +9,5 @@ Exec=hidpilot-gui
 Icon=hidpilot
 Terminal=false
 Categories=Settings;HardwareSettings;
-Keywords=logitech;mouse;keyboard;headset;dpi;battery;flow;
+Keywords=hidpilot;logitech;mouse;keyboard;headset;dpi;battery;flow;easy-switch;
 StartupWMClass=hidpilot-gui

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "hidpilot",
+  "productName": "Orbit",
   "version": "0.1.0",
   "identifier": "io.github.leandrodaf.hidpilot",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "hidpilot",
+        "title": "Orbit",
         "width": 1100,
         "height": 700,
         "minWidth": 960,

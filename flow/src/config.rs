@@ -65,6 +65,10 @@ pub struct Config {
     pub clipboard: bool,
     #[serde(default = "yes")]
     pub keyboard_follows: bool,
+    /// Move the headset's sound along with the mouse, and keep the output following the
+    /// headset as it comes and goes (see audio.rs).
+    #[serde(default = "yes")]
+    pub audio_follows: bool,
     /// Device unit id -> Easy-Switch channel (0-based) this machine sits on.
     #[serde(default)]
     pub channels: BTreeMap<String, u8>,
@@ -93,6 +97,7 @@ impl Config {
             public_key: hex(&kp.public),
             clipboard: true,
             keyboard_follows: true,
+            audio_follows: true,
             channels: BTreeMap::new(),
             peers: BTreeMap::new(),
         };

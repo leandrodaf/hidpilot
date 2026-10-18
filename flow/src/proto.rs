@@ -20,10 +20,19 @@ pub enum Msg {
         name: String,
         version: u32,
         devices: Vec<DeviceChannel>,
+        /// Only while pairing: where the receiver's screen sits as seen from the sender.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        your_side: Option<Side>,
     },
     /// Sender is handing the mouse over: the pointer should appear on the receiver's
     /// `edge`, at `pos` (0.0-1.0) along it.
-    Enter { edge: Side, pos: f64 },
+    Enter {
+        edge: Side,
+        pos: f64,
+        /// The headset's sound comes along: take it as this computer's output.
+        #[serde(default)]
+        audio: bool,
+    },
     Clipboard(Clip),
     Ping,
     Pong,

@@ -210,6 +210,12 @@ fn main() -> Result<()> {
         }
         Cmd::Headset { auto_sleep, name, eq, sidetone, mute, voice_prompts, rotate_to_mute } => {
             let Some(mut h) = centurion::find()? else {
+                if let Some(bt) = hidpilot::bluetooth::zone_headset().filter(|b| b.connected) {
+                    anyhow::bail!("{} is on Bluetooth; its settings are only reachable through the USB receiver", bt.name);
+                }
+                if centurion::receiver_present() {
+                    anyhow::bail!("the Zone receiver is plugged in, but the headset is off or out of range");
+                }
                 anyhow::bail!("no Zone headset found (is it switched on?)");
             };
             if let Some(m) = auto_sleep {
@@ -340,8 +346,14 @@ fn main() -> Result<()> {
             }
             print_platforms(&mut d)?;
         }
-        Cmd::Daemon => daemon::run()?,
-        Cmd::Notify => hidpilot::notify::run()?,
+        Cmd::Daemon => {
+            hidpp::use_software_id(hidpp::software_id::DAEMON);
+            daemon::run()?
+        }
+        Cmd::Notify => {
+            hidpp::use_software_id(hidpp::software_id::NOTIFY);
+            hidpilot::notify::run()?
+        }
         Cmd::Buttons { device } => {
             let mut d = open(&device)?;
             for c in features::controls(&mut d)? {

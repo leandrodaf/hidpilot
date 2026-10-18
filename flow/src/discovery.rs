@@ -10,6 +10,13 @@ use tokio::sync::mpsc;
 const SERVICE: &str = "_hidpilot-flow._tcp.local.";
 
 #[derive(Debug, Clone)]
+pub enum Event {
+    Found(Found),
+    /// Stopped announcing itself; carries the id (`Config::id_of`) it announced under.
+    Gone(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct Found {
     pub name: String,
     /// Full public key hex as announced; only trusted if it matches a pinned peer.
@@ -21,7 +28,7 @@ pub struct Discovery {
     _daemon: ServiceDaemon,
 }
 
-pub fn start(cfg: &Config) -> Result<(Discovery, mpsc::UnboundedReceiver<Found>)> {
+pub fn start(cfg: &Config) -> Result<(Discovery, mpsc::UnboundedReceiver<Event>)> {
     let daemon = ServiceDaemon::new()?;
     // Containers, VMs and VPN tunnels are not the LAN; announcing them only makes peers
     // waste time dialing addresses they cannot reach.
@@ -45,7 +52,17 @@ pub fn start(cfg: &Config) -> Result<(Discovery, mpsc::UnboundedReceiver<Found>)
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         while let Ok(ev) = events.recv_async().await {
-            let ServiceEvent::ServiceResolved(s) = ev else { continue };
+            let s = match ev {
+                ServiceEvent::ServiceResolved(s) => s,
+                ServiceEvent::ServiceRemoved(_, full) => {
+                    let id = full.split('.').next().unwrap_or_default().to_string();
+                    if tx.send(Event::Gone(id)).is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
             let Some(key) = s.get_property_val_str("key").map(str::to_string) else { continue };
             if key == me {
                 continue;
@@ -54,7 +71,7 @@ pub fn start(cfg: &Config) -> Result<(Discovery, mpsc::UnboundedReceiver<Found>)
             let mut addrs: Vec<SocketAddr> =
                 s.get_addresses_v4().into_iter().map(|ip| SocketAddr::new(ip.into(), s.get_port())).collect();
             addrs.sort();
-            if tx.send(Found { name, key, addrs }).is_err() {
+            if tx.send(Event::Found(Found { name, key, addrs })).is_err() {
                 break;
             }
         }

@@ -212,6 +212,9 @@ input[type="range"].line::-webkit-slider-thumb { -webkit-appearance: none; width
 .op-pic.op-headset { height: 200px; width: 180px; }
 .op-card:hover .op-pic { transform: translateY(-4px); }
 .op-pill { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 22px; border-radius: 20px; background: var(--op-surface); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); font-size: 12px; font-weight: 700; letter-spacing: 0.4px; }
+.op-card.off .op-pic { opacity: 0.35; filter: grayscale(1); }
+.op-card.off .op-pill { color: var(--op-soft); }
+.op-via { margin-top: -14px; font-size: 12px; color: var(--op-soft); letter-spacing: 0.2px; }
 .op-pill .battery { margin: 0; color: var(--op-battery); font-weight: 700; }
 .op-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--op-primary-light); border-top-color: var(--op-primary); animation: spin 0.8s linear infinite; }
 .op-empty { color: var(--op-soft); letter-spacing: 0.6px; }
@@ -267,6 +270,31 @@ input[type="range"].line::-webkit-slider-thumb { -webkit-appearance: none; width
 .op-screen { background: var(--op-surface); border: 2px solid var(--op-line); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06); }
 .op-screen.me { border-color: var(--op-primary); color: var(--op-primary); }
 .op-screen-slot { border: 2px dashed var(--op-line); }
+.op-screen.offline { opacity: 0.55; }
+
+/* Flow pairing: incoming code, asking another computer, side picker, paired list */
+.op-incoming { background: var(--op-primary-transparent); border: 2px solid var(--op-primary); border-radius: 10px; padding: 16px; margin-bottom: 18px; text-align: center; font-size: 13px; line-height: 1.45; }
+.op-incoming .op-code { margin: 8px 0 6px; }
+.op-incoming p { margin: 0 0 6px; }
+.op-incoming small { color: var(--op-soft); }
+.op-pairing { border: 1px solid var(--op-line); border-radius: 10px; padding: 14px; margin: 8px 0 12px; }
+.op-pairing .op-primary { margin-top: 12px; }
+.op-pairing .op-secondary { margin-top: 10px; }
+.op-wait { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+.op-wait.ok { color: var(--op-primary); }
+.op-wait.fail { color: #e5484d; }
+.op .op-code-input { width: 100%; margin: 8px 0 4px; text-align: center; font-size: 26px; font-weight: 700; letter-spacing: 8px; background: var(--op-bg); color: var(--op-text); border-color: var(--op-line); }
+.op-pick { padding: 4px 0 12px; border-bottom: 1px solid var(--op-line); }
+.op-pick .op-primary { margin-top: 14px; }
+.op-pick .op-primary:disabled { opacity: 0.4; cursor: default; }
+.op-sides { display: grid; grid-template-columns: 1fr 1.2fr 1fr; grid-template-areas: ". top ." "left me right" ". bottom ."; gap: 6px; align-items: stretch; }
+.op-side { border: 1px solid var(--op-line) !important; border-radius: 6px; padding: 8px 4px; font-size: 12px; line-height: 1.2; }
+.op-side.top { grid-area: top; } .op-side.left { grid-area: left; } .op-side.right { grid-area: right; } .op-side.bottom { grid-area: bottom; }
+.op-side.on { border-color: var(--op-primary) !important; color: var(--op-primary) !important; background: var(--op-primary-transparent); }
+.op-side-me { grid-area: me; display: grid; place-items: center; text-align: center; border: 2px solid var(--op-primary); border-radius: 6px; color: var(--op-primary); font-size: 12px; font-weight: 700; padding: 10px 4px; }
+.op-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--op-line); margin-right: 8px; vertical-align: middle; }
+.op-dot.on { background: #3ecf8e; }
+.op-forget { color: var(--op-primary) !important; font-size: 12px; font-weight: 700; padding: 0; }
 
 /* the headset's Tune screens sit in a column, like Tune's own window */
 .tune-shell { height: 100%; display: flex; justify-content: center; background: var(--op-bg); }

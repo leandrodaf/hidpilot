@@ -12,6 +12,8 @@ pub mod hidraw;
 pub mod hidraw;
 
 #[cfg(target_os = "linux")]
+pub mod bluetooth;
+#[cfg(target_os = "linux")]
 pub mod daemon;
 #[cfg(target_os = "linux")]
 pub mod notify;

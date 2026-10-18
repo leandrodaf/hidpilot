@@ -27,9 +27,12 @@ pub fn generate_keypair() -> Result<Keypair> {
     Ok(Builder::new(PAIRED.parse()?).generate_keypair()?)
 }
 
+/// Length and payload go out in one write, so with TCP_NODELAY a message is one packet.
 async fn write_frame(w: &mut (impl AsyncWriteExt + Unpin), data: &[u8]) -> Result<()> {
-    w.write_all(&(data.len() as u16).to_be_bytes()).await?;
-    w.write_all(data).await?;
+    let mut frame = Vec::with_capacity(2 + data.len());
+    frame.extend_from_slice(&(data.len() as u16).to_be_bytes());
+    frame.extend_from_slice(data);
+    w.write_all(&frame).await?;
     Ok(())
 }
 

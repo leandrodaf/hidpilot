@@ -23,7 +23,7 @@ const SMARTSHIFT_BUTTON: u16 = 0x00C4;
 /// Pointer travel (raw device counts) that turns a held gesture button into a swipe.
 const GESTURE_DISTANCE: i32 = 50;
 /// Software id the service uses, so its replies do not mix with the CLI's or the GUI's.
-const SERVICE_SOFTWARE_ID: u8 = 0x0B;
+const SERVICE_SOFTWARE_ID: u8 = hidpp::software_id::REMAP;
 const RECHECK: Duration = Duration::from_secs(15);
 const FOCUS_POLL: Duration = Duration::from_millis(250);
 
@@ -855,6 +855,7 @@ fn mtime() -> Option<SystemTime> {
 /// Runs until `stop` is set; every diverted control is given back before returning.
 #[cfg(target_os = "linux")]
 pub fn run(stop: Arc<AtomicBool>) -> Result<()> {
+    hidpp::use_software_id(SERVICE_SOFTWARE_ID);
     let mut config = Config::load()?;
     let mut config_time = mtime();
     let out = Arc::new(Mutex::new(Output::new()?));

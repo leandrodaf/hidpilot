@@ -6,6 +6,7 @@ mod tray;
 mod x11;
 
 use anyhow::{Context, Result, anyhow};
+use hidpilot::bluetooth;
 use hidpilot::centurion::{self, Headset};
 use hidpilot::features::{self as feat, BacklightMode};
 use hidpilot::hidpp::{self, Device, feature as f};
@@ -18,12 +19,14 @@ struct Devices {
     hidpp: Vec<Device>,
     headset: Option<Headset>,
     scanned: bool,
+    seen: Vec<String>,
 }
 
 struct State(Mutex<Devices>);
 
 impl Devices {
     fn rescan(&mut self) -> Result<()> {
+        self.seen = hid_nodes();
         self.hidpp = hidpp::discover()?;
         self.headset = centurion::find()?;
         self.scanned = true;
@@ -31,8 +34,30 @@ impl Devices {
     }
 
     fn ensure(&mut self) -> Result<()> {
-        if !self.scanned { self.rescan() } else { Ok(()) }
+        if !self.scanned || self.changed() { self.rescan() } else { Ok(()) }
     }
+
+    fn changed(&self) -> bool {
+        hid_nodes() != self.seen
+    }
+}
+
+/// The HID nodes present with the device behind each one, plus the Bluetooth devices
+/// connected. The Zone receiver re-enumerates (0af1 -> 0af0) when its headset links to it,
+/// so a change here means a device came, went or moved between receiver and Bluetooth.
+fn hid_nodes() -> Vec<String> {
+    let mut nodes: Vec<String> = std::fs::read_dir("/sys/class/hidraw")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| {
+            let dev = std::fs::read_link(e.path().join("device")).unwrap_or_default();
+            format!("{}={}", e.file_name().to_string_lossy(), dev.display())
+        })
+        .collect();
+    nodes.extend(bluetooth::connected().into_iter().map(|a| format!("bt={a}")));
+    nodes.sort();
+    nodes
 }
 
 fn kind(dev: &mut Device) -> &'static str {
@@ -65,6 +90,13 @@ fn err(e: anyhow::Error) -> String {
     format!("{e:#}")
 }
 
+/// Cheap check the UI polls, so a device switched on later shows up without a manual refresh.
+#[tauri::command(async)]
+fn devices_changed(state: tauri::State<State>) -> bool {
+    let d = state.0.lock().unwrap();
+    d.scanned && d.changed()
+}
+
 #[tauri::command(async)]
 fn devices(app: tauri::AppHandle, state: tauri::State<State>, rescan: bool) -> Result<Value, String> {
     let mut d = state.0.lock().unwrap();
@@ -77,6 +109,7 @@ fn devices(app: tauri::AppHandle, state: tauri::State<State>, rescan: bool) -> R
             "name": dev.name,
             "kind": kind,
             "link": match dev.via { hidpp::Link::Receiver => "bolt", hidpp::Link::Bluetooth => "bluetooth" },
+            "online": true,
             "battery": battery_json(dev),
         }));
     }
@@ -86,7 +119,27 @@ fn devices(app: tauri::AppHandle, state: tauri::State<State>, rescan: bool) -> R
             "name": h.name,
             "kind": "headset",
             "link": "zone-receiver",
+            "online": true,
             "battery": headset_battery_json(h),
+        }));
+    } else if let Some(bt) = bluetooth::zone_headset().filter(|b| b.connected) {
+        // Over Bluetooth BlueZ owns the headset; its settings are reached through the receiver.
+        out.push(json!({
+            "id": "headset",
+            "name": bt.name,
+            "kind": "headset",
+            "link": "bluetooth",
+            "online": true,
+            "battery": bt.battery.map(|p| json!({"percent": p})),
+        }));
+    } else if centurion::receiver_present() || bluetooth::zone_headset().is_some() {
+        out.push(json!({
+            "id": "headset",
+            "name": "Zone Vibe Wireless",
+            "kind": "headset",
+            "link": "off",
+            "online": false,
+            "battery": null,
         }));
     }
     // "MX Master 3S 95% · Zone Vibe Wireless 87%" in the tray menu and tooltip.
@@ -94,7 +147,7 @@ fn devices(app: tauri::AppHandle, state: tauri::State<State>, rescan: bool) -> R
         .iter()
         .filter_map(|d| Some(format!("{} {}%", d["name"].as_str()?, d["battery"]["percent"].as_u64()?)))
         .collect();
-    tray::set_status(&app, &if summary.is_empty() { "Nenhum dispositivo".to_string() } else { summary.join(" · ") });
+    tray::set_status(&app, &summary.join(" · "));
     Ok(Value::Array(out))
 }
 
@@ -415,116 +468,60 @@ fn thumbwheel_set(state: tauri::State<State>, id: String, preset: String) -> Res
     })
 }
 
-// ---------- Flow (settings shared with `hidpilot-flow`, which reloads them) ----------
+// ---------- Flow (through the local API of the running `hidpilot-flow` service) ----------
 
-fn flow_path() -> std::path::PathBuf {
+/// Loopback port of the Flow service's page and API (flow/src/ui.rs).
+const FLOW_API: &str = "127.0.0.1:47813";
+/// Error the page recognises and shows as "Flow is not running" with the enable button.
+const FLOW_NOT_RUNNING: &str = "flow-not-running";
+
+/// The service writes a fresh token at every start, so it is read on each call.
+fn flow_token() -> Option<String> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-        .unwrap_or_default();
-    base.join("hidpilot/flow.toml")
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
+    let t = std::fs::read_to_string(base.join("hidpilot/flow-ui.token")).ok()?;
+    Some(t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
-fn flow_load() -> Result<toml::Table> {
-    let text = std::fs::read_to_string(flow_path()).context("Flow is not set up yet: run hidpilot-flow once")?;
-    Ok(text.parse()?)
-}
-
-fn flow_save(t: &toml::Table) -> Result<()> {
-    let p = flow_path();
-    let tmp = p.with_extension("toml.tmp");
-    std::fs::write(&tmp, toml::to_string_pretty(t)?)?;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-    std::fs::rename(&tmp, &p)?;
-    Ok(())
-}
-
+/// One call to the Flow API (`state`, `pair`, `code`, `cancel`, `place`, `forget`, `set`);
+/// every call answers with the whole Flow state.
 #[tauri::command(async)]
-fn flow_get() -> Result<Value, String> {
-    let t = flow_load().map_err(err)?;
-    let peers: Vec<Value> = t
-        .get("peers")
-        .and_then(|p| p.as_table())
-        .map(|p| {
-            p.iter()
-                .map(|(k, v)| json!({"key": k, "name": v.get("name").and_then(|x| x.as_str()), "side": v.get("side").and_then(|x| x.as_str())}))
-                .collect()
-        })
-        .unwrap_or_default();
-    // Never hand the private key to the page.
-    Ok(json!({
-        "name": t.get("name").and_then(|x| x.as_str()),
-        "id": t.get("public_key").and_then(|x| x.as_str()).map(|k| k.chars().take(16).collect::<String>()),
-        "clipboard": t.get("clipboard").and_then(|x| x.as_bool()).unwrap_or(true),
-        "keyboardFollows": t.get("keyboard_follows").and_then(|x| x.as_bool()).unwrap_or(true),
-        "peers": peers,
-        "running": std::process::Command::new("pgrep").args(["-x", "hidpilot-flow"]).status().map(|s| s.success()).unwrap_or(false),
-    }))
-}
-
-#[tauri::command(async)]
-fn flow_set(key: String, value: Value, peer: Option<String>) -> Result<Value, String> {
-    let mut t = flow_load().map_err(err)?;
-    match (key.as_str(), peer) {
-        ("clipboard", None) => {
-            t.insert("clipboard".into(), toml::Value::Boolean(value.as_bool().ok_or("expected true/false")?));
-        }
-        ("keyboardFollows", None) => {
-            t.insert("keyboard_follows".into(), toml::Value::Boolean(value.as_bool().ok_or("expected true/false")?));
-        }
-        ("side", Some(peer)) => {
-            let side = value.as_str().filter(|s| ["left", "right", "top", "bottom"].contains(s));
-            let peers = t.get_mut("peers").and_then(|p| p.as_table_mut()).ok_or("no peers")?;
-            // One screen per side.
-            if let Some(s) = side {
-                for (k, v) in peers.iter_mut() {
-                    if *k != peer && v.get("side").and_then(|x| x.as_str()) == Some(s) {
-                        v.as_table_mut().unwrap().remove("side");
-                    }
-                }
-            }
-            let entry = peers.get_mut(&peer).and_then(|v| v.as_table_mut()).ok_or("unknown computer")?;
-            match side {
-                Some(s) => entry.insert("side".into(), toml::Value::String(s.into())),
-                None => entry.remove("side"),
-            };
-        }
-        ("forget", Some(peer)) => {
-            if let Some(p) = t.get_mut("peers").and_then(|p| p.as_table_mut()) {
-                p.remove(&peer);
-            }
-        }
-        _ => return Err(format!("unknown Flow setting {key}")),
+fn flow_api(call: String, body: Value) -> Result<Value, String> {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+    if call.is_empty() || !call.chars().all(|c| c.is_ascii_lowercase()) {
+        return Err("unknown Flow call".into());
     }
-    flow_save(&t).map_err(err)?;
-    flow_get()
-}
-
-/// Opens the pairing window (`hidpilot-flow pair`) and returns the code it shows.
-#[tauri::command(async)]
-fn flow_pair() -> Result<String, String> {
-    use std::io::{BufRead, BufReader};
-    let mut child = std::process::Command::new("hidpilot-flow")
-        .arg("pair")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("hidpilot-flow not found: {e}"))?;
-    let out = child.stdout.take().unwrap();
-    let mut lines = BufReader::new(out).lines();
-    let first = lines.next().ok_or("pairing did not start")?.map_err(|e| e.to_string())?;
-    // "Pairing code for NAME: 123  456"
-    let code: String = first.rsplit(':').next().unwrap_or("").chars().filter(|c| c.is_ascii_digit()).collect();
-    // Keep reading so the child never blocks on a full pipe; it exits on its own.
-    std::thread::spawn(move || {
-        for _ in lines {}
-        let _ = child.wait();
-    });
-    if code.len() != 6 {
-        return Err("could not read the pairing code".into());
+    let token = flow_token().ok_or(FLOW_NOT_RUNNING)?;
+    let addr: std::net::SocketAddr = FLOW_API.parse().unwrap();
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500)).map_err(|_| FLOW_NOT_RUNNING)?;
+    stream.set_read_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
+    stream.set_write_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
+    let body = if body.is_null() { "{}".to_string() } else { body.to_string() };
+    let request = format!(
+        "POST /api/{call} HTTP/1.1\r\nHost: {FLOW_API}\r\nX-Token: {token}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).map_err(|_| FLOW_NOT_RUNNING)?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).map_err(|_| FLOW_NOT_RUNNING)?;
+    let text = String::from_utf8_lossy(&response);
+    let (head, payload) = text.split_once("\r\n\r\n").ok_or(FLOW_NOT_RUNNING)?;
+    let status = head.split(' ').nth(1).unwrap_or("");
+    match status {
+        "200" => serde_json::from_str(payload).map_err(|e| format!("Flow: {e}")),
+        "400" => Err(serde_json::from_str::<Value>(payload)
+            .ok()
+            .and_then(|v| v["error"].as_str().map(str::to_string))
+            .unwrap_or_else(|| "Flow: bad request".into())),
+        // 403: a token from before the service restarted; anything else: not our service.
+        _ => {
+            logln!("flow_api {call}: HTTP {status}");
+            Err(FLOW_NOT_RUNNING.into())
+        }
     }
-    Ok(code)
 }
 
 /// JSON from the local Logitech assets (hotspot metadata), read here so the page does
@@ -575,7 +572,7 @@ fn service_enable(name: String) -> Result<Value, String> {
     let out = systemctl_user(&["enable", "--now", &unit]).map_err(err)?;
     logln!("service_enable {unit}: {} {}", out.status, String::from_utf8_lossy(&out.stderr).trim());
     if !out.status.success() {
-        return Err(format!("não foi possível ativar {unit}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!("{}: {}", tray::tr(tray::Text::EnableFailed).replace("{unit}", &unit), String::from_utf8_lossy(&out.stderr).trim()));
     }
     service_status(name)
 }
@@ -624,19 +621,22 @@ fn layout_set(id: String) -> Result<Value, String> {
     layout_get()
 }
 
-// ---------- app settings: start with the computer, open the window at login ----------
+// ---------- app settings: start with the computer, open the window at login, language ----------
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(default)]
 struct AppSettings {
     /// Start hidpilot when the user logs in (in the tray).
     autostart: bool,
     /// Also show the window when started at login; off = tray only.
     open_on_login: bool,
+    /// UI language code (see gui/ui/i18n.js), or "auto" to follow the system.
+    language: String,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        AppSettings { autostart: true, open_on_login: true }
+        AppSettings { autostart: true, open_on_login: true, language: "auto".into() }
     }
 }
 
@@ -672,33 +672,40 @@ fn apply_settings(s: AppSettings) -> Result<()> {
         std::fs::write(
             &entry,
             format!(
-                "[Desktop Entry]\nType=Application\nName=hidpilot\nComment=Logitech devices in the tray\n\
+                "[Desktop Entry]\nType=Application\nName=Orbit\nComment=Logitech devices in the tray\n\
                  Exec=\"{exe}\" --login\nIcon=hidpilot\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
             ),
         )?;
     } else if entry.exists() {
         std::fs::remove_file(&entry)?;
     }
-    logln!("settings: autostart={} open_on_login={}", s.autostart, s.open_on_login);
+    logln!("settings: autostart={} open_on_login={} language={}", s.autostart, s.open_on_login, s.language);
     Ok(())
 }
 
 #[tauri::command(async)]
 fn settings_get() -> Value {
     let s = load_settings();
-    json!({ "autostart": s.autostart, "openOnLogin": s.open_on_login })
+    json!({ "autostart": s.autostart, "openOnLogin": s.open_on_login, "language": s.language })
 }
 
 #[tauri::command(async)]
-fn settings_set(key: String, value: bool) -> Result<Value, String> {
+fn settings_set(key: String, value: Value) -> Result<Value, String> {
     let mut s = load_settings();
-    match key.as_str() {
-        "autostart" => s.autostart = value,
-        "openOnLogin" => s.open_on_login = value,
+    match (key.as_str(), &value) {
+        ("autostart", Value::Bool(v)) => s.autostart = *v,
+        ("openOnLogin", Value::Bool(v)) => s.open_on_login = *v,
+        ("language", Value::String(v)) if v == "auto" || tray::match_language(v).is_some() => s.language = v.clone(),
         _ => return Err("unknown setting".into()),
     }
     apply_settings(s).map_err(err)?;
     Ok(settings_get())
+}
+
+/// The language the page resolved and shows (e.g. "de"); the tray menu follows it.
+#[tauri::command]
+fn ui_language(app: tauri::AppHandle, lang: String) {
+    tray::set_language(&app, &lang);
 }
 
 /// Lets the page write to the app log (errors, failed loads).
@@ -708,6 +715,7 @@ fn log_js(msg: String) {
 }
 
 fn main() {
+    hidpp::use_software_id(hidpp::software_id::APP);
     logfile::init();
     logln!(
         "start {} session={:?} display={:?} desktop={:?}",
@@ -739,7 +747,7 @@ fn main() {
             } else {
                 logln!("started at login: staying in the tray");
             }
-            if let Err(e) = tray::install(app.handle()) {
+            if let Err(e) = tray::install(app.handle(), &load_settings().language) {
                 logln!("tray: failed to install: {e}");
             }
             // Report how the window manager received the first window.
@@ -752,7 +760,7 @@ fn main() {
         })
         .on_window_event(tray::hide_on_close)
         .manage(State(Mutex::new(Devices::default())))
-        .invoke_handler(tauri::generate_handler![devices, device, set, remap_get, remap_set, thumbwheel_set, flow_get, flow_set, flow_pair, asset_json, service_status, service_enable, log_js, layout_get, layout_set, settings_get, settings_set])
+        .invoke_handler(tauri::generate_handler![devices, devices_changed, device, set, remap_get, remap_set, thumbwheel_set, flow_api, asset_json, service_status, service_enable, log_js, layout_get, layout_set, settings_get, settings_set, ui_language])
         .run(tauri::generate_context!())
         .expect("failed to start hidpilot");
 }
