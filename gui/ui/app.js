@@ -480,6 +480,8 @@ app.addEventListener("input", (ev) => {
     state.draft = t.value;
   } else if (t.dataset.flowCode !== undefined) {
     flowCodeInput(t);
+  } else if (t.dataset.flowAddr !== undefined) {
+    flowAddrInput(t);
   }
 });
 

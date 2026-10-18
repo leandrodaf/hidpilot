@@ -9,6 +9,7 @@ const OP = {
   pick: null, // nearby computer whose side is being chosen: {key, side}
   lastAsk: null, // last pairing asked for, to retry it
   codeDraft: "",
+  addrDraft: "", // address typed for a computer the network does not announce
   codeSent: false,
   forget: null, // peer key waiting for the second "forget" click
   layout: null,
@@ -488,12 +489,18 @@ const flowOpen = () => state.page === "flow" || (state.page === "device" && stat
 // Redraws without losing the digits being typed in the code box.
 function flowRender() {
   const typing = document.activeElement?.dataset?.flowCode !== undefined;
+  const addrTyping = document.activeElement?.dataset?.flowAddr !== undefined;
   render();
   OP.flowShown = JSON.stringify(OP.flow);
   const box = app.querySelector("[data-flow-code]");
   if (box && (typing || !document.activeElement || document.activeElement === document.body)) {
     box.focus();
     box.setSelectionRange(box.value.length, box.value.length);
+  }
+  const addr = app.querySelector("[data-flow-addr]");
+  if (addr && addrTyping) {
+    addr.focus();
+    addr.setSelectionRange(addr.value.length, addr.value.length);
   }
 }
 
@@ -597,6 +604,14 @@ function flowPanel() {
         )
         .join("")
     : `<p class="op-note">${t("flow.noNearby")}</p>`;
+  const addrKey = OP.pick?.key?.startsWith("addr:") ? OP.pick.key : null;
+  const byAddr = addrKey && !busy
+    ? `<div class="op-peer"><b>${esc(addrKey.slice(5))}</b></div>${flowSidePicker({ name: addrKey.slice(5) })}`
+    : `<div class="op-byaddr"><label class="op-note" for="flow-addr">${esc(t("flow.byAddr"))}</label>
+        <div class="op-addr-row"><input id="flow-addr" class="text-input" placeholder="192.168.1.10" autocomplete="off" spellcheck="false"
+          value="${esc(OP.addrDraft || "")}" data-flow-addr ${busy ? "disabled" : ""}>
+        <button class="op-primary small" data-flow="pickaddr" ${busy ? "disabled" : ""}>${t("flow.connect")}</button></div></div>`;
+  const myAddrs = f.addrs?.length ? `<p class="op-note">${esc(t("flow.address"))}: <b class="op-addr">${esc(f.addrs.join("  ·  "))}</b></p>` : "";
   return `${flowIncoming(f)}<h2>Flow</h2>
     <p class="op-note">${t("flow.note")}</p>
     <div class="op-row"><span>${t("flow.clipboard")}</span>${flowToggle("clipboard", f.clipboard)}</div>
@@ -605,7 +620,7 @@ function flowPanel() {
     <p class="op-note">${t("flow.audioNote")}</p>
     <div class="op-sub">${t("flow.pairedCaps")}</div>${peers}
     <p class="op-note">${t("flow.trust")}</p>
-    <div class="op-sub">${t("flow.nearbyCaps")}</div>${flowOutgoing(f)}${nearby}`;
+    <div class="op-sub">${t("flow.nearbyCaps")}</div>${myAddrs}${flowOutgoing(f)}${nearby}${byAddr}`;
 }
 
 const flowToggle = (key, on) => `<button class="toggle ${on ? "on" : ""}" data-flow-toggle="${key}"></button>`;
@@ -618,6 +633,13 @@ async function flowClick(el) {
     case "pick":
       OP.pick = { key: d.key, side: null };
       return flowRender();
+    case "pickaddr": {
+      const a = (app.querySelector("[data-flow-addr]")?.value || OP.addrDraft || "").trim();
+      if (!a) return;
+      OP.addrDraft = a;
+      OP.pick = { key: `addr:${a}`, side: null };
+      return flowRender();
+    }
     case "side":
       OP.pick = { ...OP.pick, side: d.side };
       return flowRender();
@@ -654,6 +676,10 @@ async function flowClick(el) {
 }
 
 // Digits of the code shown on the other computer; sent as soon as all six are in.
+function flowAddrInput(el) {
+  OP.addrDraft = el.value;
+}
+
 function flowCodeInput(el) {
   const digits = el.value.replace(/\D/g, "").slice(0, 6);
   if (el.value !== digits) el.value = digits;

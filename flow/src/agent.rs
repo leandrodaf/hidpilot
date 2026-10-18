@@ -226,12 +226,45 @@ async fn answer_pairing(state: State, clipboard: Clipboard, mut stream: TcpStrea
 
 /// This computer asks `key` (seen on the network) to pair; `side` is where its screen is.
 pub(crate) fn ask_pairing(state: &State, clipboard: &Clipboard, key: &str, side: Option<config::Side>) -> Result<()> {
+    if let Some(addr) = key.strip_prefix("addr:") {
+        return ask_pairing_addr(state, clipboard, addr, side);
+    }
     let (found, me) = {
         let mut s = state.lock().unwrap();
         let f = s.nearby.get(key).cloned().context("that computer is no longer on the network")?;
         s.outgoing = Some(Outgoing { key: key.into(), name: f.name.clone(), status: "asking", error: None, code_tx: None });
         (f, s.cfg.clone())
     };
+    start_asking(state, clipboard, found.addrs, me, side);
+    Ok(())
+}
+
+/// Same, for a computer the network does not announce: the person typed its address.
+/// The key in `outgoing` is "addr:<ip:port>", so a retry comes back here.
+pub(crate) fn ask_pairing_addr(state: &State, clipboard: &Clipboard, addr: &str, side: Option<config::Side>) -> Result<()> {
+    let addr = parse_addr(addr)?;
+    let me = {
+        let mut s = state.lock().unwrap();
+        s.outgoing = Some(Outgoing { key: format!("addr:{addr}"), name: addr.ip().to_string(), status: "asking", error: None, code_tx: None });
+        s.cfg.clone()
+    };
+    start_asking(state, clipboard, vec![addr], me, side);
+    Ok(())
+}
+
+/// "192.168.1.10", "192.168.1.10:47812" or "[fe80::1]:47812"; the pairing port by default.
+fn parse_addr(text: &str) -> Result<SocketAddr> {
+    let t = text.trim();
+    if let Ok(a) = t.parse::<SocketAddr>() {
+        return Ok(a);
+    }
+    if let Ok(ip) = t.parse::<std::net::IpAddr>() {
+        return Ok(SocketAddr::new(ip, PAIR_PORT));
+    }
+    anyhow::bail!("type the other computer's IP address, like 192.168.1.10")
+}
+
+fn start_asking(state: &State, clipboard: &Clipboard, addrs: Vec<SocketAddr>, me: Config, side: Option<config::Side>) {
     let (state, clipboard) = (state.clone(), clipboard.clone());
     tokio::spawn(async move {
         let fail = |state: &State, e: anyhow::Error| {
@@ -240,7 +273,7 @@ pub(crate) fn ask_pairing(state: &State, clipboard: &Clipboard, key: &str, side:
                 o.error = Some(format!("{e:#}"));
             }
         };
-        let (stream, addr) = match pairing::ask(&found.addrs, &me).await {
+        let (stream, addr) = match pairing::ask(&addrs, &me).await {
             Ok(v) => v,
             Err(e) => return fail(&state, e),
         };
@@ -256,13 +289,13 @@ pub(crate) fn ask_pairing(state: &State, clipboard: &Clipboard, key: &str, side:
             Ok((peer, _)) => {
                 if let Some(o) = state.lock().unwrap().outgoing.as_mut() {
                     o.status = "done";
+                    o.name = peer.name.clone();
                 }
                 added_peer(&state, &clipboard, peer);
             }
             Err(e) => fail(&state, e),
         }
     });
-    Ok(())
 }
 
 /// The code the person typed for the pairing this computer asked for.
@@ -286,7 +319,13 @@ fn added_peer(state: &State, clipboard: &Clipboard, peer: config::Peer) {
         }
         println!("flow: paired with {}", peer.name);
         let key = peer.key.clone();
-        let addrs: Vec<SocketAddr> = s.nearby.get(&key).map(|f| f.addrs.clone()).unwrap_or_default();
+        // Announced on the network, or else the address pairing reached it at.
+        let addrs: Vec<SocketAddr> = s
+            .nearby
+            .get(&key)
+            .map(|f| f.addrs.clone())
+            .or_else(|| Some(vec![peer.addr.as_ref()?.parse().ok()?]))
+            .unwrap_or_default();
         s.cfg.peers.insert(key.clone(), peer);
         let _ = s.cfg.save();
         s.cfg_mtime = mtime();

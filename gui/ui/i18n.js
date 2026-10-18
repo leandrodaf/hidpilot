@@ -329,6 +329,8 @@ I18N["pt-BR"] = {
   "side.right": "à direita",
   "side.top": "acima",
   "side.bottom": "abaixo",
+  "flow.address": "Endereço deste computador",
+  "flow.byAddr": "Não apareceu? Digite o endereço IP dele",
 };
 
 I18N.en = {
@@ -579,6 +581,8 @@ I18N.en = {
   "side.right": "to the right",
   "side.top": "above",
   "side.bottom": "below",
+  "flow.address": "This computer's address",
+  "flow.byAddr": "Not listed? Type its IP address",
 };
 
 I18N["es"] = {
@@ -830,6 +834,8 @@ I18N["es"] = {
   "flow.incoming.title": "{name} quiere emparejarse con esta computadora",
   "flow.incoming.note": "Escribe este código en {name}. Hazlo solo si esa computadora es tuya.",
   "flow.incoming.expires": { one: "Caduca en {n} segundo", other: "Caduca en {n} segundos" },
+  "flow.address": "Dirección de este equipo",
+  "flow.byAddr": "¿No aparece? Escribe su dirección IP",
 };
 
 I18N["fr"] = {
@@ -1081,6 +1087,8 @@ I18N["fr"] = {
   "flow.incoming.title": "{name} souhaite se jumeler avec cet ordinateur",
   "flow.incoming.note": "Saisissez ce code sur {name}. Ne le faites que si cet ordinateur vous appartient.",
   "flow.incoming.expires": { one: "Expire dans {n} seconde", other: "Expire dans {n} secondes" },
+  "flow.address": "Adresse de cet ordinateur",
+  "flow.byAddr": "Absent de la liste ? Saisissez son adresse IP",
 };
 
 I18N["de"] = {
@@ -1332,6 +1340,8 @@ I18N["de"] = {
   "flow.incoming.title": "{name} möchte sich mit diesem Computer koppeln",
   "flow.incoming.note": "Gib diesen Code auf {name} ein. Tu das nur, wenn dieser Computer dir gehört.",
   "flow.incoming.expires": { one: "Läuft in {n} Sekunde ab", other: "Läuft in {n} Sekunden ab" },
+  "flow.address": "Adresse dieses Computers",
+  "flow.byAddr": "Nicht aufgeführt? Gib seine IP-Adresse ein",
 };
 
 I18N["it"] = {
@@ -1583,6 +1593,8 @@ I18N["it"] = {
   "flow.incoming.title": "{name} vuole associarsi a questo computer",
   "flow.incoming.note": "Digita questo codice su {name}. Fallo solo se quel computer è tuo.",
   "flow.incoming.expires": { one: "Scade tra {n} secondo", other: "Scade tra {n} secondi" },
+  "flow.address": "Indirizzo di questo computer",
+  "flow.byAddr": "Non compare? Digita il suo indirizzo IP",
 };
 
 I18N["nl"] = {
@@ -1834,6 +1846,8 @@ I18N["nl"] = {
   "flow.incoming.title": "{name} wil koppelen met deze computer",
   "flow.incoming.note": "Typ deze code op {name}. Doe dit alleen als die computer van jou is.",
   "flow.incoming.expires": { one: "Verloopt over {n} seconde", other: "Verloopt over {n} seconden" },
+  "flow.address": "Adres van deze computer",
+  "flow.byAddr": "Staat hij er niet bij? Typ zijn IP-adres",
 };
 
 I18N["pl"] = {
@@ -2085,6 +2099,8 @@ I18N["pl"] = {
   "flow.incoming.title": "{name} chce sparować się z tym komputerem",
   "flow.incoming.note": "Wpisz ten kod na {name}. Zrób to tylko wtedy, gdy ten komputer należy do Ciebie.",
   "flow.incoming.expires": { one: "Wygasa za {n} sekundę", few: "Wygasa za {n} sekundy", many: "Wygasa za {n} sekund", other: "Wygasa za {n} sekundy" },
+  "flow.address": "Adres tego komputera",
+  "flow.byAddr": "Nie ma go na liście? Wpisz jego adres IP",
 };
 
 I18N["cs"] = {
@@ -2336,6 +2352,8 @@ I18N["cs"] = {
   "flow.incoming.title": "{name} se chce spárovat s tímto počítačem",
   "flow.incoming.note": "Zadejte tento kód na {name}. Udělejte to jen tehdy, pokud je ten počítač váš.",
   "flow.incoming.expires": { one: "Vyprší za {n} sekundu", few: "Vyprší za {n} sekundy", many: "Vyprší za {n} sekundy", other: "Vyprší za {n} sekund" },
+  "flow.address": "Adresa tohoto počítače",
+  "flow.byAddr": "Není v seznamu? Zadejte jeho IP adresu",
 };
 
 I18N["sv"] = {
@@ -2587,6 +2605,8 @@ I18N["sv"] = {
   "flow.incoming.title": "{name} vill parkoppla med den här datorn",
   "flow.incoming.note": "Skriv den här koden på {name}. Gör det bara om den datorn är din.",
   "flow.incoming.expires": { one: "Går ut om {n} sekund", other: "Går ut om {n} sekunder" },
+  "flow.address": "Den här datorns adress",
+  "flow.byAddr": "Syns den inte? Skriv dess IP-adress",
 };
 
 I18N["ru"] = {
@@ -2838,6 +2858,8 @@ I18N["ru"] = {
   "flow.incoming.title": "{name} хочет выполнить сопряжение с этим компьютером",
   "flow.incoming.note": "Введите этот код на {name}. Делайте это только если тот компьютер ваш.",
   "flow.incoming.expires": { one: "Истекает через {n} секунду", few: "Истекает через {n} секунды", many: "Истекает через {n} секунд", other: "Истекает через {n} секунды" },
+  "flow.address": "Адрес этого компьютера",
+  "flow.byAddr": "Нет в списке? Введите его IP-адрес",
 };
 
 I18N["uk"] = {
@@ -3089,6 +3111,8 @@ I18N["uk"] = {
   "flow.incoming.title": "{name} хоче спаруватися з цим комп'ютером",
   "flow.incoming.note": "Введіть цей код на {name}. Робіть це лише якщо той комп'ютер ваш.",
   "flow.incoming.expires": { one: "Спливає через {n} секунду", few: "Спливає через {n} секунди", many: "Спливає через {n} секунд", other: "Спливає через {n} секунди" },
+  "flow.address": "Адреса цього комп'ютера",
+  "flow.byAddr": "Немає в списку? Введіть його IP-адресу",
 };
 
 I18N["tr"] = {
@@ -3340,6 +3364,8 @@ I18N["tr"] = {
   "flow.incoming.title": "{name} bu bilgisayarla eşleşmek istiyor",
   "flow.incoming.note": "Bu kodu {name} üzerinde yazın. Bunu yalnızca o bilgisayar sizinse yapın.",
   "flow.incoming.expires": { one: "{n} saniye içinde süresi dolacak", other: "{n} saniye içinde süresi dolacak" },
+  "flow.address": "Bu bilgisayarın adresi",
+  "flow.byAddr": "Listede yok mu? IP adresini yazın",
 };
 
 I18N["id"] = {
@@ -3591,6 +3617,8 @@ I18N["id"] = {
   "flow.incoming.title": "{name} ingin memasangkan dengan komputer ini",
   "flow.incoming.note": "Ketik kode ini di {name}. Lakukan hanya jika komputer itu milik Anda.",
   "flow.incoming.expires": { other: "Kedaluwarsa dalam {n} detik" },
+  "flow.address": "Alamat komputer ini",
+  "flow.byAddr": "Tidak muncul? Ketik alamat IP-nya",
 };
 
 I18N["vi"] = {
@@ -3842,6 +3870,8 @@ I18N["vi"] = {
   "flow.incoming.title": "{name} muốn ghép nối với máy tính này",
   "flow.incoming.note": "Nhập mã này trên {name}. Chỉ làm vậy nếu máy tính đó là của bạn.",
   "flow.incoming.expires": { other: "Hết hạn sau {n} giây" },
+  "flow.address": "Địa chỉ của máy tính này",
+  "flow.byAddr": "Không thấy? Nhập địa chỉ IP của máy đó",
 };
 
 I18N["hi"] = {
@@ -4093,6 +4123,8 @@ I18N["hi"] = {
   "flow.incoming.title": "{name} इस कंप्यूटर के साथ जुड़ना चाहता है",
   "flow.incoming.note": "यह कोड {name} पर टाइप करें। ऐसा तभी करें जब वह कंप्यूटर आपका हो।",
   "flow.incoming.expires": { one: "{n} सेकंड में समाप्त", other: "{n} सेकंड में समाप्त" },
+  "flow.address": "इस कंप्यूटर का पता",
+  "flow.byAddr": "सूची में नहीं है? उसका IP पता टाइप करें",
 };
 
 I18N["ja"] = {
@@ -4344,6 +4376,8 @@ I18N["ja"] = {
   "flow.incoming.title": "{name} がこのパソコンとのペアリングを求めています",
   "flow.incoming.note": "このコードを {name} に入力してください。そのパソコンが自分のものである場合のみ行ってください。",
   "flow.incoming.expires": { other: "あと {n} 秒で期限切れ" },
+  "flow.address": "このコンピューターのアドレス",
+  "flow.byAddr": "表示されない場合は、相手の IP アドレスを入力",
 };
 
 I18N["ko"] = {
@@ -4595,6 +4629,8 @@ I18N["ko"] = {
   "flow.incoming.title": "{name}이(가) 이 컴퓨터와 페어링하려고 합니다",
   "flow.incoming.note": "이 코드를 {name}에 입력하세요. 그 컴퓨터가 본인 것일 때만 진행하세요.",
   "flow.incoming.expires": { other: "{n}초 후 만료" },
+  "flow.address": "이 컴퓨터의 주소",
+  "flow.byAddr": "목록에 없나요? 해당 IP 주소를 입력하세요",
 };
 
 I18N["zh-CN"] = {
@@ -4846,6 +4882,8 @@ I18N["zh-CN"] = {
   "flow.incoming.title": "{name} 想与这台电脑配对",
   "flow.incoming.note": "在 {name} 上输入此验证码。仅当那台电脑属于您时才这样做。",
   "flow.incoming.expires": { other: "{n} 秒后过期" },
+  "flow.address": "本机地址",
+  "flow.byAddr": "没有显示？输入对方的 IP 地址",
 };
 
 I18N["zh-TW"] = {
@@ -5097,4 +5135,6 @@ I18N["zh-TW"] = {
   "flow.incoming.title": "{name} 想與這台電腦配對",
   "flow.incoming.note": "在 {name} 上輸入此驗證碼。僅當那台電腦屬於您時才這麼做。",
   "flow.incoming.expires": { other: "{n} 秒後過期" },
+  "flow.address": "本機位址",
+  "flow.byAddr": "沒有顯示？輸入對方的 IP 位址",
 };

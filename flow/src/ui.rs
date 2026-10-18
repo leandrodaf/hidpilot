@@ -163,7 +163,10 @@ fn api(path: &str, body: &Value, state: &State, clipboard: &Clipboard) -> Result
     let str_of = |k: &str| body[k].as_str().map(str::to_string).with_context(|| format!("missing {k}"));
     match path {
         "/api/state" => {}
-        "/api/pair" => agent::ask_pairing(state, clipboard, &str_of("key")?, side(&body["side"])?)?,
+        "/api/pair" => match body["addr"].as_str() {
+            Some(addr) if !addr.trim().is_empty() => agent::ask_pairing_addr(state, clipboard, addr, side(&body["side"])?)?,
+            _ => agent::ask_pairing(state, clipboard, &str_of("key")?, side(&body["side"])?)?,
+        },
         "/api/code" => agent::enter_code(state, str_of("code")?)?,
         "/api/cancel" => state.lock().unwrap().outgoing = None,
         "/api/place" => {
@@ -219,6 +222,7 @@ fn snapshot(state: &State) -> Value {
     json!({
         "name": s.cfg.name,
         "id": s.cfg.my_id(),
+        "addrs": crate::discovery::lan_addrs(),
         "peers": peers,
         "nearby": nearby,
         "incoming": s.incoming.as_ref().filter(|i| i.until > now).map(|i| json!({ "name": i.name, "code": i.code, "seconds": (i.until - now).as_secs() })),

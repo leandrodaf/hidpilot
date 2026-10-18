@@ -221,7 +221,10 @@ Push the pointer against the screen edge facing another computer and the mouse a
 Mac or Windows PC it opens after the install, or with `hidpilot-flow ui`). Computers running
 Flow on the same network show up by themselves. Click one, say where its screen sits, and that
 computer shows a 6-digit code, in a notification and on its Flow page; type it and both are
-paired, each knowing where the other's screen is.
+paired, each knowing where the other's screen is. If the other computer does not show up
+(Wi-Fi that isolates clients, guest networks, mesh systems and some routers drop the mDNS
+announcement), each Flow page shows this computer's IP address: type the other one's under
+*Not listed?* and pair the same way. Once paired, the computers reconnect by address too.
 
 <p align="center"><img src="docs/screenshots/flow-pairing.png" width="70%" alt="Flow page: computers on the network, picking where the screen sits"></p>
 

@@ -70,8 +70,8 @@ EOS
     <key>CFBundleName</key><string>Orbit Flow</string>
     <key>CFBundleDisplayName</key><string>Orbit Flow</string>
     <key>CFBundleIdentifier</key><string>$LABEL.ui</string>
-    <key>CFBundleVersion</key><string>1.0.0</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleVersion</key><string>1.0.1</string>
+    <key>CFBundleShortVersionString</key><string>1.0.1</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>orbit-flow</string>
     <key>CFBundleIconFile</key><string>orbit</string>

@@ -79,7 +79,24 @@ pub fn start(cfg: &Config) -> Result<(Discovery, mpsc::UnboundedReceiver<Event>)
     Ok((Discovery { _daemon: daemon }, rx))
 }
 
-fn is_virtual(name: &str) -> bool {
+/// This computer's LAN IPv4 addresses, for the person to type on a computer that cannot
+/// see the mDNS announcement (isolated Wi-Fi, guest networks, mesh systems).
+pub fn lan_addrs() -> Vec<String> {
+    let mut v: Vec<String> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| !i.is_loopback() && i.name != "lo" && !is_virtual(&i.name))
+        .filter_map(|i| match i.ip() {
+            std::net::IpAddr::V4(ip) if !ip.is_link_local() => Some(ip.to_string()),
+            _ => None,
+        })
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+pub(crate) fn is_virtual(name: &str) -> bool {
     const PREFIXES: [&str; 10] = ["docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "tun", "tap", "wg", "utun"];
     let n = name.to_lowercase();
     PREFIXES.iter().any(|p| n.starts_with(p)) || n.contains("warp") || n.contains("tailscale") || n.contains("zerotier")

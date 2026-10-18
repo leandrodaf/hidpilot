@@ -336,3 +336,10 @@ input[type="range"].line::-webkit-slider-thumb { -webkit-appearance: none; width
 .op-settings .op-row > span { display: flex; flex-direction: column; }
 .op-small { color: var(--op-soft); font-size: 13px; margin-top: 4px; }
 .op-row.disabled { opacity: 0.5; pointer-events: none; }
+
+/* Flow: pairing by address when the network hides the announcement */
+.op-byaddr { margin-top: 10px; }
+.op-byaddr label { display: block; margin: 0 0 6px; }
+.op-addr-row { display: flex; gap: 8px; align-items: center; }
+.op-addr-row .text-input { flex: 1; min-width: 0; background: var(--op-bg); color: var(--op-text); border-color: var(--op-line); padding: 9px 10px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.op-addr { font-variant-numeric: tabular-nums; user-select: all; }
