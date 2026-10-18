@@ -46,6 +46,8 @@ enum Cmd {
     Place { peer: String, side: Side },
     /// List paired computers
     Peers,
+    /// Show the mice and keyboards connected here and their Easy-Switch channels (diagnosis)
+    Devices,
     /// Remove a paired computer
     Forget { peer: String },
     /// Show or change options
@@ -67,6 +69,17 @@ async fn main() -> Result<()> {
         Cmd::Run => agent::run().await,
         Cmd::Ui | Cmd::Pair { to: None, .. } => ui::open(),
         Cmd::Pair { to: Some(to), code } => pair_with(&to, code).await,
+        Cmd::Devices => {
+            let d = devices::Devices::scan()?;
+            if d.list.is_empty() {
+                println!("no Easy-Switch device is connected to this computer right now");
+                println!("(the mouse must be here, over Bluetooth or a receiver, for Flow to hand it over)");
+            }
+            for l in d.describe() {
+                println!("{l}");
+            }
+            Ok(())
+        }
         Cmd::Place { peer, side } => {
             let mut cfg = Config::load_or_create()?;
             let key = find_peer(&cfg, &peer)?;

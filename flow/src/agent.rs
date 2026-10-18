@@ -88,6 +88,22 @@ pub async fn run() -> Result<()> {
     let clipboard = Clipboard::start();
 
     rescan_devices(state.clone(), Duration::ZERO);
+    // A device paired later, or one that reconnects slowly, must still be found.
+    {
+        let state = state.clone();
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(10));
+                let linked_without_mouse = {
+                    let s = state.lock().unwrap();
+                    !s.conns.is_empty() && !s.devices.as_ref().is_some_and(|d| d.has_mouse())
+                };
+                if linked_without_mouse {
+                    scan_now(&state);
+                }
+            }
+        });
+    }
     {
         let state = state.clone();
         crate::audio::watch(move || state.lock().unwrap().cfg.audio_follows);
@@ -440,8 +456,9 @@ async fn read_loop(state: &State, clipboard: &Clipboard, key: &str, mut reader: 
                         clipboard.put(clip);
                     }
                 }
-                // The devices reconnect to us within a second or two; pick them up then.
-                rescan_devices(state.clone(), Duration::from_millis(1500));
+                // The devices reconnect to us within a second or two, Bluetooth sometimes
+                // in five or more; keep looking until a mouse shows up.
+                rescan_until_mouse(state.clone());
             }
             Msg::Clipboard(clip) => clip_in = Some((clip, Instant::now())),
             Msg::Ping => {
@@ -455,30 +472,63 @@ async fn read_loop(state: &State, clipboard: &Clipboard, key: &str, mut reader: 
 fn rescan_devices(state: State, after: Duration) {
     thread::spawn(move || {
         thread::sleep(after);
-        match Devices::scan() {
-            Ok(d) => {
-                let mut s = state.lock().unwrap();
-                let mut changed = false;
-                for c in d.channels() {
-                    if s.cfg.channels.insert(c.unit.clone(), c.channel) != Some(c.channel) {
-                        changed = true;
-                    }
-                }
-                if changed {
-                    let _ = s.cfg.save();
-                }
-                s.holding = d.list.iter().any(|t| !t.keyboard);
-                let hello_devices = d.channels();
-                s.devices = Some(d);
-                // Tell peers which channels we sit on, so they can send devices here.
-                let name = s.cfg.name.clone();
-                for c in s.conns.values() {
-                    let _ = c.tx.send(Msg::Hello { name: name.clone(), version: VERSION, devices: hello_devices.clone(), your_side: None });
+        scan_now(&state);
+    });
+}
+
+/// After a hand-over to us: scan every 1.5 s for up to 20 s until a mouse is here.
+fn rescan_until_mouse(state: State) {
+    thread::spawn(move || {
+        for _ in 0..14 {
+            thread::sleep(Duration::from_millis(1500));
+            if scan_now(&state) {
+                return;
+            }
+        }
+        eprintln!("flow: no Easy-Switch mouse connected to this computer; it cannot hand the mouse back");
+    });
+}
+
+/// One scan; returns whether a mouse is connected here. Logs the devices when they change.
+fn scan_now(state: &State) -> bool {
+    match Devices::scan() {
+        Ok(d) => {
+            let lines = d.describe();
+            let mut s = state.lock().unwrap();
+            let mut changed = false;
+            for c in d.channels() {
+                if s.cfg.channels.insert(c.unit.clone(), c.channel) != Some(c.channel) {
+                    changed = true;
                 }
             }
-            Err(e) => eprintln!("flow: device scan failed: {e:#}"),
+            if changed {
+                let _ = s.cfg.save();
+            }
+            let before: Vec<String> = s.devices.as_ref().map(|d| d.describe()).unwrap_or_default();
+            if lines != before {
+                if lines.is_empty() {
+                    println!("flow: no Easy-Switch device connected to this computer right now");
+                }
+                for l in &lines {
+                    println!("flow: device here: {l}");
+                }
+            }
+            let has_mouse = d.has_mouse();
+            s.holding = has_mouse;
+            let hello_devices = d.channels();
+            s.devices = Some(d);
+            // Tell peers which channels we sit on, so they can send devices here.
+            let name = s.cfg.name.clone();
+            for c in s.conns.values() {
+                let _ = c.tx.send(Msg::Hello { name: name.clone(), version: VERSION, devices: hello_devices.clone(), your_side: None });
+            }
+            has_mouse
         }
-    });
+        Err(e) => {
+            eprintln!("flow: device scan failed: {e:#}");
+            false
+        }
+    }
 }
 
 fn edge_loop(state: State, clipboard: Clipboard, rt: tokio::runtime::Handle) -> Result<()> {

@@ -254,10 +254,12 @@ fn is_hidpp_interface(info: &HidrawInfo) -> bool {
 /// Finds every online HID++ 2.0 device on receivers and Bluetooth.
 pub fn discover() -> Result<Vec<Device>> {
     let mut found = Vec::new();
+    let mut interfaces = 0usize;
     for info in hidraw::enumerate()? {
         if !is_hidpp_interface(&info) {
             continue;
         }
+        interfaces += 1;
         let (via, slots): (Link, Vec<u8>) = match info.bus {
             BUS_USB => (Link::Receiver, (1..=6).collect()),
             BUS_BLUETOOTH => (Link::Bluetooth, vec![0xFF]),
@@ -278,6 +280,16 @@ pub fn discover() -> Result<Vec<Device>> {
             found.push(dev);
         }
     }
+    #[cfg(target_os = "macos")]
+    if found.is_empty() && interfaces > 0 {
+        eprintln!(
+            "warning: {interfaces} Logitech HID++ interface(s) present but none answered. On macOS this program \
+             needs Input Monitoring: System Settings → Privacy & Security → Input Monitoring → add {}",
+            std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "hidpilot-flow".into())
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = interfaces;
     Ok(found)
 }
 

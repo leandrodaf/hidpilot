@@ -59,8 +59,11 @@ pub fn enumerate() -> Result<Vec<HidrawInfo>> {
         if report_ids.is_empty() {
             continue;
         }
+        // The 0xFF43 collection only exists on Bluetooth HID++; trust it over the bus
+        // hidapi reports, which some backends leave unknown for Bluetooth LE.
         let bus = match d.bus_type() {
             hidapi::BusType::Bluetooth => BUS_BLUETOOTH,
+            _ if d.usage_page() == 0xFF43 => BUS_BLUETOOTH,
             _ => BUS_USB,
         };
         out.push(HidrawInfo {

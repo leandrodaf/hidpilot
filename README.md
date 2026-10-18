@@ -130,8 +130,10 @@ the script also puts **Orbit Flow** in Launchpad and Spotlight, which opens that
 There is no Orbit app on the Mac; its own settings stay in Logi Options+.
 
 The script uses Homebrew for `SwitchAudioSource` (without it, the mouse and keyboard still move
-and the sound stays). If the mouse does not switch, give `hidpilot-flow` *Input Monitoring* in
-System Settings → Privacy & Security. To update, `git pull && ./scripts/install-macos.sh`;
+and the sound stays). **If the mouse arrives on the Mac but never comes back**, the Mac could not
+talk to it: give `~/.local/bin/hidpilot-flow` *Input Monitoring* in System Settings → Privacy &
+Security (the "+" button, then ⌘⇧G to type the path), and check with `hidpilot-flow devices`,
+which lists the mice and keyboards the Mac can see and their Easy-Switch channels. To update, `git pull && ./scripts/install-macos.sh`;
 to remove, `./scripts/install-macos.sh --uninstall`.
 
 ### On Windows (Flow)

@@ -55,6 +55,26 @@ mod imp {
 pub use imp::Devices;
 
 impl Devices {
+    /// One line per device, for the log and `hidpilot-flow devices`.
+    pub fn describe(&self) -> Vec<String> {
+        self.list
+            .iter()
+            .map(|t| {
+                let hosts: Vec<String> = t
+                    .host_names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| format!("{}{}", if i as u8 == t.channel { "*" } else { "" }, if n.is_empty() { "(unnamed)" } else { n.as_str() }))
+                    .collect();
+                format!("{} {} [{}] on channel {}: {}", t.dev.name, if t.keyboard { "(keyboard)" } else { "(mouse)" }, t.unit, t.channel + 1, hosts.join(" | "))
+            })
+            .collect()
+    }
+
+    pub fn has_mouse(&self) -> bool {
+        self.list.iter().any(|t| !t.keyboard)
+    }
+
     pub fn channels(&self) -> Vec<DeviceChannel> {
         self.list
             .iter()
