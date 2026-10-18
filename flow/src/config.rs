@@ -92,7 +92,12 @@ impl Config {
         }
         let kp = crate::link::generate_keypair()?;
         let c = Config {
-            name: hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|_| "linux".into()),
+            // macOS reports "Name.local"; the suffix is noise to people and to Easy-Switch names.
+            name: hostname::get()
+                .map(|h| h.to_string_lossy().trim_end_matches(".local").to_string())
+                .ok()
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "computer".into()),
             private_key: hex(&kp.private),
             public_key: hex(&kp.public),
             clipboard: true,

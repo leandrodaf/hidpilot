@@ -69,13 +69,52 @@ impl Devices {
             return Some(c.channel);
         }
         let t = self.list.iter().find(|t| t.unit == unit)?;
-        let want = peer_name.to_lowercase();
+        let want = normalize(peer_name);
+        if want.is_empty() {
+            return None;
+        }
         t.host_names
             .iter()
             .position(|n| {
-                let n = n.to_lowercase();
+                let n = normalize(n);
                 !n.is_empty() && (n == want || n.starts_with(&want) || want.starts_with(&n))
             })
             .map(|i| i as u8)
+    }
+}
+
+/// A machine name as the device may have stored it. macOS announces "MacBook-Pro-de-Ana.local"
+/// on the network but pairs over Bluetooth as "MacBook Pro de Ana"; Windows and Linux differ in
+/// case and punctuation too. Lowercase, drop ".local", and treat any run of punctuation or
+/// whitespace as one space.
+fn normalize(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    let base = lower.strip_suffix(".local").unwrap_or(&lower);
+    let mut out = String::with_capacity(base.len());
+    let mut space = false;
+    for c in base.chars() {
+        if c.is_alphanumeric() {
+            out.push(c);
+            space = false;
+        } else if !space && !out.is_empty() {
+            out.push(' ');
+            space = true;
+        }
+    }
+    out.trim_end().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize;
+
+    #[test]
+    fn host_names_match_across_transports() {
+        assert_eq!(normalize("MacBook-Pro-de-Ana.local"), "macbook pro de ana");
+        assert_eq!(normalize("MacBook Pro de Ana"), "macbook pro de ana");
+        assert_eq!(normalize("  DESKTOP-ABC123 "), "desktop abc123");
+        assert_eq!(normalize("leandro-ferreira"), "leandro ferreira");
+        assert_eq!(normalize("Ana’s MacBook Pro"), "ana s macbook pro");
+        assert_eq!(normalize(""), "");
     }
 }
