@@ -48,7 +48,7 @@ check_requirements() {
     pkg-config --exists webkit2gtk-4.1 2>/dev/null || missing+=(libwebkit2gtk-4.1-dev)
     pkg-config --exists gtk+-3.0 2>/dev/null || missing+=(libgtk-3-dev)
     # the tray icon loads this library at run time
-    ldconfig -p 2>/dev/null | grep -q libayatana-appindicator3 || missing+=(libayatana-appindicator3-1)
+    ldconfig -p 2>/dev/null | grep libayatana-appindicator3 >/dev/null || missing+=(libayatana-appindicator3-1)
     command -v 7z >/dev/null || missing+=(p7zip-full)
     if ((${#missing[@]})); then
         die "missing system packages. Install them with:
