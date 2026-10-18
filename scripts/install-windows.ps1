@@ -14,19 +14,22 @@ $ErrorActionPreference = "Stop"
 $Dir = Join-Path $env:LOCALAPPDATA "hidpilot"
 $Target = Join-Path $Dir "hidpilot-flow.exe"
 $Startup = Join-Path ([Environment]::GetFolderPath("Startup")) "hidpilot-flow.vbs"
+$Shortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Orbit Flow.lnk"
+$Icon = Join-Path $Dir "orbit.ico"
 $Repo = Split-Path -Parent $PSScriptRoot
 
 function Stop-Flow { Get-Process hidpilot-flow -ErrorAction SilentlyContinue | Stop-Process -Force }
 
 if ($Uninstall) {
     Stop-Flow
-    Remove-Item -Force -ErrorAction SilentlyContinue $Startup, $Target
+    Remove-Item -Force -ErrorAction SilentlyContinue $Startup, $Shortcut, $Target, $Icon
     Write-Host "hidpilot-flow removed (pairings kept in $env:APPDATA\hidpilot)."
     exit 0
 }
 
 Write-Host "hidpilot will install on this PC:" -ForegroundColor Cyan
 Write-Host "  - hidpilot-flow in $Dir, started at login (hidden)"
+Write-Host "  - 'Orbit Flow' in the Start menu: opens the Flow page"
 Write-Host "  - AudioDeviceCmdlets (PowerShell Gallery), so the headset's sound can move with the mouse"
 Write-Host ""
 
@@ -45,6 +48,17 @@ if (-not $Exe) {
 Stop-Flow
 New-Item -ItemType Directory -Force $Dir | Out-Null
 Copy-Item -Force $Exe $Target
+Copy-Item -Force (Join-Path $Repo "packaging\icons\hidpilot.ico") $Icon -ErrorAction SilentlyContinue
+
+# A Start menu entry so the Flow page has a visible place; it just runs "hidpilot-flow ui".
+$Shell = New-Object -ComObject WScript.Shell
+$Lnk = $Shell.CreateShortcut($Shortcut)
+$Lnk.TargetPath = $Target
+$Lnk.Arguments = "ui"
+$Lnk.WorkingDirectory = $Dir
+$Lnk.Description = "Orbit Flow: mouse, keyboard and sound across your computers"
+if (Test-Path $Icon) { $Lnk.IconLocation = "$Icon,0" }
+$Lnk.Save()
 
 if (-not (Get-Module -ListAvailable AudioDeviceCmdlets)) {
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
@@ -71,7 +85,7 @@ Write-Host @"
 
 The Flow page is opening in your browser: pick the Linux computer under "On this network",
 click where its screen is, and type the code it shows. That's it.
-(Reopen it any time: "$Target" ui)
+(Reopen it any time: "Orbit Flow" in the Start menu, or: "$Target" ui)
 
   - When Windows asks, allow hidpilot-flow on private networks.
   - For the sound to come along, pair the Zone Vibe with this PC over Bluetooth once.

@@ -125,7 +125,9 @@ git clone https://github.com/leandrodaf/hidpilot.git && cd hidpilot
 ```
 
 The Flow page opens in the browser: pick the Linux computer under *On this network*, click
-where its screen sits, and type the code it shows. No terminal needed after the install.
+where its screen sits, and type the code it shows. No terminal needed after the install:
+the script also puts **Orbit Flow** in Launchpad and Spotlight, which opens that page again.
+There is no Orbit app on the Mac; its own settings stay in Logi Options+.
 
 The script uses Homebrew for `SwitchAudioSource` (without it, the mouse and keyboard still move
 and the sound stays). If the mouse does not switch, give `hidpilot-flow` *Input Monitoring* in
@@ -146,8 +148,9 @@ powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
 Without Rust, download `hidpilot-flow.exe` from the
 [latest release](https://github.com/leandrodaf/hidpilot/releases/latest) and pass it with
 `-Exe C:\path\hidpilot-flow.exe`. The script installs the `AudioDeviceCmdlets` PowerShell module
-(for the sound), starts the agent hidden at login and checks it is running; `-Uninstall`
-removes it. At the end the Flow page opens, to pair just like on the Mac.
+(for the sound), starts the agent hidden at login, adds **Orbit Flow** to the Start menu
+(it opens the Flow page) and checks it is running; `-Uninstall` removes it all. At the end
+the Flow page opens, to pair just like on the Mac.
 
 ### What gets installed (Linux)
 
