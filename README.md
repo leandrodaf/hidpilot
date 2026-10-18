@@ -143,7 +143,8 @@ cd hidpilot
 powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
 ```
 
-Without Rust, download `hidpilot-flow.exe` from Actions → flow → artifacts and pass it with
+Without Rust, download `hidpilot-flow.exe` from the
+[latest release](https://github.com/leandrodaf/hidpilot/releases/latest) and pass it with
 `-Exe C:\path\hidpilot-flow.exe`. The script installs the `AudioDeviceCmdlets` PowerShell module
 (for the sound), starts the agent hidden at login and checks it is running; `-Uninstall`
 removes it. At the end the Flow page opens, to pair just like on the Mac.
@@ -211,7 +212,7 @@ hidpilot headset --name "Zone Vibe Wireless"
 
 ## Flow
 
-Push the pointer against the screen edge facing another computer and the mouse and keyboard switch to it, with the clipboard. Both computers run `hidpilot-flow` (Linux, Windows and macOS builds come from CI) and the devices must be paired with both (Easy-Switch channels).
+Push the pointer against the screen edge facing another computer and the mouse and keyboard switch to it, with the clipboard. Both computers run `hidpilot-flow` (Linux, Windows and macOS builds are attached to each [release](https://github.com/leandrodaf/hidpilot/releases)) and the devices must be paired with both (Easy-Switch channels).
 
 **Pairing works like Bluetooth.** On either computer open the Flow page (in Orbit: Flow; on a
 Mac or Windows PC it opens after the install, or with `hidpilot-flow ui`). Computers running

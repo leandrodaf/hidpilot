@@ -128,8 +128,13 @@ enable_user() {
 # Ask for the password once, up front, and keep sudo alive until the script ends, so a
 # long build never leaves the user typing it again halfway.
 sudo_once() {
-    step "Asking for your password once (for the battery service and device rules)"
-    sudo -v || die "sudo is needed for the battery service and device rules"
+    # Already allowed (NOPASSWD or a fresh timestamp): nothing to ask.
+    if sudo -n true 2>/dev/null; then
+        step "sudo is already allowed (for the battery service and device rules)"
+    else
+        step "Asking for your password once (for the battery service and device rules)"
+        sudo -v || die "sudo is needed for the battery service and device rules"
+    fi
     while kill -0 "$$" 2>/dev/null; do
         sudo -n true 2>/dev/null
         sleep 50

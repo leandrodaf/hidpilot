@@ -33,7 +33,7 @@ Write-Host ""
 if (-not $Exe) {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Write-Host "Rust is needed to build: install it from https://rustup.rs (with the Visual Studio C++ build tools it offers)," -ForegroundColor Yellow
-        Write-Host "or download hidpilot-flow.exe from the repository's Actions (flow -> artifacts) and pass it with -Exe." -ForegroundColor Yellow
+        Write-Host "or download hidpilot-flow.exe from https://github.com/leandrodaf/hidpilot/releases/latest and pass it with -Exe." -ForegroundColor Yellow
         exit 1
     }
     Write-Host "Building (a few minutes the first time)..."

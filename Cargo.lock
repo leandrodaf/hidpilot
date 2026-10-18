@@ -1846,7 +1846,7 @@ dependencies = [
 
 [[package]]
 name = "hidpilot"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1861,7 +1861,7 @@ dependencies = [
 
 [[package]]
 name = "hidpilot-flow"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1886,7 +1886,7 @@ dependencies = [
 
 [[package]]
 name = "hidpilot-gui"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "hidpilot",

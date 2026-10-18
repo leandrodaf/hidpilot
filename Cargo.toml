@@ -1,6 +1,6 @@
 [package]
 name = "hidpilot"
-version = "0.1.0"
+version = "1.0.0"
 description = "Configure Logitech mice, keyboards and headsets on Linux"
 license = "MIT"
 edition = "2024"
